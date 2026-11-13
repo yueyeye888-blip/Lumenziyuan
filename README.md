@@ -32,6 +32,12 @@ For managed Linux browser QA, follow the Sites skill's managed preview reference
 
 The portable profile simulates ChatGPT sign-in only for loopback development requests. Visit `/signin-with-chatgpt?return_to=/` to sign in as `local_seedy` (`seedy@sites.test`, display name `Seedy`) and `/signout-with-chatgpt?return_to=/` to sign out. The development cookie preserves that identity across server restarts. Mock auth is disabled in the managed-linux profile and is not included in production builds; hosted authentication remains dispatch-owned.
 
+## Isolated Workflow Simulation
+
+The address generator provides an authenticated, administrator-only isolated workflow test. Use fictional profile data, confirm the test-data warning, and choose success, failure, or timeout to verify the result and retry UI. The endpoint checks the administrator role on both capability lookup and submission; it does not contact Addrs.xyz or any external service, persist data, generate a document, send email, or make a payment. Run its unit tests with `npm test`.
+
+For portable local development, `/signin-with-chatgpt?as=admin&return_to=/` selects the local administrator identity (`admin@sites.test`); the default sign-in remains an employee identity. These identities and the local administrator override are restricted to development and are not production authentication.
+
 The Worker uses `vinext/server/fetch-handler`, including Vinext's config-aware image handling. After building, `npm start` runs that Worker locally through Wrangler on `127.0.0.1`, sharing `.wrangler/state` with dev preview and local D1 migrations; it does not deploy the site or simulate sign-in. Use the URL printed by the server. Pass `npm start -- --port <port>` to select a different built-preview port.
 
 Local previews use Miniflare's placeholder `Request.cf` metadata without a network lookup. Set `CLOUDFLARE_CF_FETCH_ENABLED=true` to opt into fetching preview metadata; this setting does not change hosted request metadata.

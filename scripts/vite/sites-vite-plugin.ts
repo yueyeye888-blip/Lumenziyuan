@@ -105,13 +105,25 @@ export function sites({ mockAuth = true } = {}): Plugin {
         const signIn = url.pathname === "/signin-with-chatgpt";
         const signOut = url.pathname === "/signout-with-chatgpt";
         if (!signIn && !signOut) {
-          if (signInCookies.length === 1 && signInCookies[0] === "1") {
-            setHeader(request, "oai-authenticated-user-id", localUserId);
-            setHeader(request, "oai-authenticated-user-email", localEmail);
+          if (
+            signInCookies.length === 1 &&
+            (signInCookies[0] === "1" || signInCookies[0] === "admin")
+          ) {
+            const admin = signInCookies[0] === "admin";
+            setHeader(
+              request,
+              "oai-authenticated-user-id",
+              admin ? "local_admin" : localUserId,
+            );
+            setHeader(
+              request,
+              "oai-authenticated-user-email",
+              admin ? "admin@sites.test" : localEmail,
+            );
             setHeader(
               request,
               "oai-authenticated-user-full-name",
-              localFullName,
+              admin ? "Local Admin" : localFullName,
             );
             setHeader(
               request,
@@ -163,7 +175,9 @@ export function sites({ mockAuth = true } = {}): Plugin {
         );
         response.setHeader(
           "Set-Cookie",
-          `${localCookieName}=${signIn ? "1" : ""}; Path=/; ${
+          `${localCookieName}=${
+            signIn ? (url.searchParams.get("as") === "admin" ? "admin" : "1") : ""
+          }; Path=/; ${
             signOut ? "Max-Age=0; " : ""
           }HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`,
         );

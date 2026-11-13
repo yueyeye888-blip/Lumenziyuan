@@ -2,7 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Languages, Loader2, X } from "lucide-react";
-import { ADDRESS_LINE_LIMIT, EMPTY_PERSONAL_DETAILS, SOURCE_ADDRESS_LIMIT, type AddressTranslation, type PersonalDetails } from "@/lib/personal-details";
+import { TEST_ADDRESS_COUNTRIES, generateTestAddress } from "@/lib/test-address.mjs";
+import { ADDRESS_LINE_LIMIT, EMPTY_PERSONAL_DETAILS, SOURCE_ADDRESS_LIMIT, type AddressTranslation, type PersonalDetails, validatePersonalDetails } from "@/lib/personal-details";
+
+type WorkflowTestScenario = "success" | "failure" | "timeout";
+type WorkflowTestResult = {
+  testOnly: true;
+  status: "completed" | "failed" | "timed_out";
+  requestNo: string;
+  message: string;
+  result: { label: string; profile: PersonalDetails } | null;
+};
 
 export default function PersonalDetailsForm() {
   const [profile, setProfile] = useState<PersonalDetails>({ ...EMPTY_PERSONAL_DETAILS, addressLines: ["", "", ""] });
@@ -16,12 +26,23 @@ export default function PersonalDetailsForm() {
   const [translationSource, setTranslationSource] = useState("");
   const [translationError, setTranslationError] = useState("");
   const [showComparison, setShowComparison] = useState(false);
+  const [testEnabled, setTestEnabled] = useState(false);
+  const [testScenario, setTestScenario] = useState<WorkflowTestScenario>("success");
+  const [testCountry, setTestCountry] = useState("US");
+  const [testAcknowledged, setTestAcknowledged] = useState(false);
+  const [testSubmitting, setTestSubmitting] = useState(false);
+  const [testMessage, setTestMessage] = useState("");
+  const [testResult, setTestResult] = useState<WorkflowTestResult | null>(null);
   const requestRef = useRef<AbortController | null>(null);
   const sourceRef = useRef("");
   const addressSnapshotRef = useRef("");
 
   useEffect(() => {
     let active = true;
+    fetch("/api/workflow-simulation", { cache: "no-store" }).then(async (response) => {
+      const data = await response.json() as { enabled?: boolean };
+      if (response.ok && active) setTestEnabled(Boolean(data.enabled));
+    }).catch(() => {});
     fetch("/api/addresses/normalize", { cache: "no-store" }).then(async (response) => {
       const data = await response.json() as { configured?: boolean; error?: string };
       if (!response.ok) throw new Error(data.error || "翻译服务状态读取失败");
@@ -69,6 +90,46 @@ export default function PersonalDetailsForm() {
     setTranslation(null); setMode("manual");
   };
 
+  const runWorkflowTest = async () => {
+    setTestMessage("");
+    setTestResult(null);
+    if (!testAcknowledged) {
+      setTestMessage("请确认填写的是虚构测试资料。");
+      return;
+    }
+
+    let testProfile: PersonalDetails;
+    try {
+      testProfile = validatePersonalDetails(profile);
+    } catch (error) {
+      setTestMessage(error instanceof Error ? error.message : "请检查测试资料");
+      return;
+    }
+
+    setTestSubmitting(true);
+    setTestMessage("测试任务已提交，隔离模拟服务处理中…");
+    try {
+      const response = await fetch("/api/workflow-simulation", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          acknowledged: true,
+          profile: testProfile,
+          scenario: testScenario,
+        }),
+      });
+      const data = await response.json() as WorkflowTestResult & { error?: string };
+      if (!response.ok) throw new Error(data.error || "隔离测试失败");
+      setTestResult(data);
+      setTestMessage(data.message);
+    } catch (error) {
+      setTestMessage(error instanceof Error ? error.message : "隔离测试失败");
+    } finally {
+      setTestSubmitting(false);
+    }
+  };
+
   return <form onSubmit={(event) => event.preventDefault()} autoComplete="off" aria-label="填写个人资料" className="mb-6 rounded-2xl border border-[#dce5f3] bg-white p-5 sm:p-6">
     <div className="mb-5"><h2 className="text-base font-semibold text-[#243d64]">填写个人资料</h2><p className="mt-1 text-xs leading-5 text-slate-500">一次性填写，本页不保存资料；接收邮箱请每次手动输入。</p></div>
     <fieldset className="min-w-0 space-y-5">
@@ -88,5 +149,24 @@ export default function PersonalDetailsForm() {
       <label className="block"><span className="mb-2 block text-sm font-medium">接收邮箱</span><input required type="email" maxLength={254} autoComplete="off" value={profile.recipientEmail} onChange={(event) => change("recipientEmail", event.target.value)} placeholder="请手动填写本次接收邮箱" className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-[#87a3d9]" /><span className="mt-2 block text-xs text-slate-400">请每次手动填写；不会使用登录邮箱或历史邮箱作为默认值。</span></label>
       {message && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-xs leading-5 text-emerald-800">{message}</p>}
     </fieldset>
+    {testEnabled && <section aria-label="隔离流程测试" className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-4 sm:p-5">
+      <h3 className="text-sm font-semibold text-amber-950">隔离流程测试 · 管理员</h3>
+      <p className="mt-2 text-xs leading-5 text-amber-900">仅模拟提交、处理状态和结果回显；不会访问 addrs.xyz、生成文件、保存资料、发送邮件或付款。请使用虚构资料。</p>
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+        <label className="block flex-1 text-xs font-medium text-amber-950"><span className="mb-1.5 block">测试地址国家</span><select value={testCountry} onChange={(event) => setTestCountry(event.target.value)} className="h-10 w-full rounded-xl border border-amber-200 bg-white px-3 text-sm text-slate-700">{Object.entries(TEST_ADDRESS_COUNTRIES).map(([code, spec]) => <option key={code} value={code}>{spec.label}</option>)}</select></label>
+        <button type="button" onClick={() => setProfile((current) => ({ ...current, addressLines: generateTestAddress(testCountry) as PersonalDetails["addressLines"] }))} className="h-10 rounded-xl border border-amber-700 px-4 text-xs font-medium text-amber-900">自动生成虚构地址</button>
+      </div>
+      <label className="mt-4 flex items-start gap-2 text-xs leading-5 text-amber-950"><input type="checkbox" checked={testAcknowledged} onChange={(event) => setTestAcknowledged(event.target.checked)} className="mt-0.5" /><span>我确认以上姓名、地址和邮箱均为虚构测试资料。</span></label>
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+        <label className="block flex-1 text-xs font-medium text-amber-950"><span className="mb-1.5 block">模拟结果</span><select value={testScenario} onChange={(event) => setTestScenario(event.target.value as WorkflowTestScenario)} className="h-10 w-full rounded-xl border border-amber-200 bg-white px-3 text-sm text-slate-700"><option value="success">成功</option><option value="failure">失败</option><option value="timeout">超时</option></select></label>
+        <button type="button" disabled={testSubmitting || !testAcknowledged} onClick={() => void runWorkflowTest()} className="h-10 rounded-xl bg-amber-900 px-4 text-xs font-medium text-white disabled:cursor-wait disabled:opacity-50">{testSubmitting ? "模拟处理中…" : testResult ? "重新运行隔离测试" : "提交隔离测试"}</button>
+      </div>
+      {testMessage && <p role="status" aria-live="polite" className="mt-3 text-xs leading-5 text-amber-950">{testMessage}</p>}
+      {testResult && <div className="mt-4 rounded-xl border-2 border-dashed border-amber-400 bg-white p-4">
+        <p className="text-xs font-bold tracking-wide text-amber-800">SAMPLE · NOT VALID · MOCK RESULT</p>
+        <p className="mt-2 text-xs text-slate-600">模拟编号：{testResult.requestNo} · 状态：{testResult.status}</p>
+        {testResult.result && <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-amber-50 p-3 text-xs leading-5 text-slate-700">{JSON.stringify(testResult.result.profile, null, 2)}</pre>}
+      </div>}
+    </section>}
   </form>;
 }
