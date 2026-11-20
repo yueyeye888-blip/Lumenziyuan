@@ -1,3 +1,4 @@
+import { withLocale } from './commerce/locale-html.mjs';
 import path from 'node:path';
 import { downloadPriceFor } from './commerce/archive-downloads.mjs';
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -63,7 +64,8 @@ export async function handlePrivateTemplateArchive(req, res, { root, url, user, 
   const suffix = url.pathname.slice(BASE.length);
   if (['GET','HEAD'].includes(req.method) && ['', '/', '/app.js', '/style.css', '/enhance.js'].includes(suffix)) {
     const asset = suffix === '/app.js' ? 'app.js' : suffix === '/enhance.js' ? 'enhance.js' : suffix === '/style.css' ? 'style.css' : 'index.html';
-    const content = await readFile(path.join(root, 'template-library-ui', asset));
+    const source = await readFile(path.join(root, 'template-library-ui', asset));
+    const content = asset.endsWith('.html') ? Buffer.from(withLocale(source)) : source;
     const contentType = asset.endsWith('.js') ? 'application/javascript' : asset.endsWith('.css') ? 'text/css' : 'text/html';
     res.writeHead(200, { 'content-type': contentType + '; charset=utf-8', 'content-length': content.length, 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'self'; img-src 'self' https://cnd.windx.co.uk; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" });
     res.end(req.method === 'HEAD' ? undefined : content); return true;

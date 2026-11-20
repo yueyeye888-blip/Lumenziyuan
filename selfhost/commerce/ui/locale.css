@@ -1,0 +1,28 @@
+.lumen-locale-picker {
+  position: fixed;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  z-index: 110;
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid #cbd8eb;
+  border-radius: 8px;
+  background: #fff;
+  color: #274267;
+  box-shadow: 0 3px 14px #233c6521;
+  font: 650 13px/1 system-ui, sans-serif;
+}
+.lumen-locale-picker button {
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  min-width: 42px;
+  min-height: 32px;
+  padding: 0 7px;
+}
+.lumen-locale-picker button:hover { background: #eef3fa; }
+.lumen-locale-picker button[aria-pressed=true] { background: #1d4fc1; color: #fff; }
+.lumen-locale-picker button:focus-visible { outline: 2px solid #235cd6; outline-offset: 2px; }

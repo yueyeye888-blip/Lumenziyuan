@@ -333,20 +333,14 @@
   function enhance() {
     for (const heading of document.querySelectorAll('h1,h2')) {
       if (processed.has(heading)) continue;
-      switch (heading.textContent.trim()) {
+      switch ((window.LumenLocale?.originalText(heading) ?? heading.textContent).trim()) {
         case '已购买产品与交付信息': {
           const button = element('button','导出二维码 Excel');
           button.type = 'button'; button.style.cssText = buttonStyle; button.title = '导出当前筛选结果中已勾选的资源';
           const info = element('p',''); info.role = 'status'; info.style.cssText = 'font-size:12px;color:#5a7093';
           button.addEventListener('click',() => void exportSelection(button,info));
           const email = element('button','发送邮箱'); email.type = 'button'; email.style.cssText = primaryStyle;
-          if (heading.closest('[data-customer-workbench]')) {
-            email.disabled = true;
-            email.textContent = '发送邮箱（合伙人权限）';
-            email.style.cssText = buttonStyle + ';cursor:default;opacity:.7';
-          } else {
-            email.addEventListener('click',() => openEmailDialog(info));
-          }
+          email.addEventListener('click',() => openEmailDialog(info));
           const actions = document.createElement('div'); actions.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:12px';
           actions.append(button,email,info); heading.parentElement.append(actions);
           processed.add(heading); break;

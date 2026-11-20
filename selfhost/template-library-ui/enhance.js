@@ -1,6 +1,7 @@
 (() => {
   const BASE='/__host/template-archive';
   const states=new WeakMap();
+  const labelOf=element=>(window.LumenLocale?.originalText(element)??element.textContent).trim();
   let application;
   let openRequested=new URL(location.href).searchParams.get('templateCategory')==='driving-visa';
   const loadApplication=()=>{
@@ -12,9 +13,9 @@
   stylesheet.textContent='[data-lumen-library-tabs]{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:2px 0 24px}[data-lumen-library-tabs] button{display:flex;align-items:center;text-align:left;gap:13px;border:1px solid #dfe6f0;border-radius:14px;background:#fff;padding:17px 20px;cursor:pointer;color:#637c9d;transition:background .15s,border-color .15s;min-width:0}[data-lumen-library-tabs] button[aria-selected="true"]{border-color:#7294c4;background:#edf3fc;box-shadow:0 0 0 1px #7294c420}[data-lumen-library-tabs] .lumen-tab-icon{display:grid;place-items:center;width:40px;height:40px;flex-shrink:0;background:#f0f4fa;color:#708daf;border-radius:11px}[data-lumen-library-tabs] button[aria-selected="true"] .lumen-tab-icon{background:#dce8f8;color:#315d9e}[data-lumen-library-tabs] svg{width:22px;height:22px}[data-lumen-library-tabs] strong{display:block;font-size:14px;font-weight:650;color:#29466c}[data-lumen-library-tabs] small{display:block;font-size:11px;color:#8192a9;margin-top:5px;line-height:1.5}[data-lumen-library-tabs] button:focus-visible{outline:2px solid #5983bd;outline-offset:3px}[data-lumen-driver-panel]{min-width:0}@media(max-width:520px){[data-lumen-library-tabs]{gap:9px}[data-lumen-library-tabs] button{padding:13px 11px;gap:9px}[data-lumen-library-tabs] .lumen-tab-icon{width:30px;height:33px}[data-lumen-library-tabs] strong{font-size:12px}[data-lumen-library-tabs] small{font-size:10px}}';
   document.head.append(stylesheet);
   function attach(){
-    if(openRequested){if([...document.querySelectorAll('h1')].some(element=>element.textContent.trim()==='全球模版库'))openRequested=false;else{const button=[...document.querySelectorAll('button')].find(element=>element.textContent.trim()==='全球模版库');if(button)button.click();}}
+    if(openRequested){if([...document.querySelectorAll('h1')].some(element=>labelOf(element)==='全球模版库'))openRequested=false;else{const button=[...document.querySelectorAll('button')].find(element=>labelOf(element)==='全球模版库');if(button)button.click();}}
     for(const heading of document.querySelectorAll('h1')){
-      if(heading.textContent.trim()!=='全球模版库')continue;
+      if(labelOf(heading)!=='全球模版库')continue;
       const existing=states.get(heading);if(existing){existing.apply();continue;}
       const header=heading.parentElement.parentElement;const library=header.parentElement;
       if(!library||library.querySelector('[data-lumen-library-tabs]'))continue;

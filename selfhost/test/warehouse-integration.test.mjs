@@ -22,7 +22,7 @@ test('warehouse price uses the published daily EUR base, fixed integer units, an
   await assert.rejects(()=>price(100,'ZZZ'));
   await assert.rejects(()=>createWarehousePrices({now:()=>now,fetchImpl:async()=>new Response(xml.replace('11-19','09-01'))})(100,'CNY'));
 });
-test('D1 stock allocation, capture recovery, replay after restart, scoped staff access and email', async t=>{
+test('D1 stock allocation, capture recovery, replay after restart, public shopper access and email', async t=>{
   const mf=new Miniflare({modules:true,script:'export default {fetch(){return new Response("ok")}}',d1Databases:['DB']});
   t.after(()=>mf.dispose());
   const db=new DatabaseSync(':memory:');t.after(()=>db.close());
@@ -35,7 +35,7 @@ test('D1 stock allocation, capture recovery, replay after restart, scoped staff 
     const iv=randomBytes(12), cipher=createCipheriv('aes-256-gcm',key,iv);
     const enc=Buffer.concat([cipher.update('private inventory fixture'),cipher.final(),cipher.getAuthTag()]);
     const sql=d1.prepare(`INSERT INTO warehouse_inventory (id,batch_id,supplier,product_name,unit_price,currency,encrypted_value,iv,created_by)
-      VALUES(?,?,'Supplier','Product',?,'USD',?,?,'admin')`);
+      VALUES(?,?,'Supplier','Gmail account',?,'USD',?,?,'admin')`);
     await d1.batch(Array.from({length:qty},()=>sql.bind(randomUUID(),batchId,cost,enc.toString('base64'),iv.toString('base64'))));return batchId;
   }
   let failCapture=true,sends=0;
@@ -44,32 +44,43 @@ test('D1 stock allocation, capture recovery, replay after restart, scoped staff 
     outlook:{fetch:async req=>{sends++;const body=await req.json();assert.match(body.text,/private inventory fixture/);return Response.json({ok:true,providerId:'test'});}},
     verifyPin:async (u,p)=>{if(p!=='123456')throw fault(400,'PIN');}};
   let api=createWarehouse(options);
-  const staff={id:'staff',email:'staff@example.org',name:'Staff'}, guest={...staff,role:'customer'};
-  async function post(fields,user=staff) {
-    const req=Readable.from([Buffer.from(JSON.stringify(fields))]);req.method='POST';req.headers={origin:options.config.origin,'content-type':'application/json'};
+  const shopper={id:'shopper',email:'shopper@example.org',name:'Shopper',role:'customer'};
+  async function request(path,fields,user=shopper) {
+    const req=Readable.from(fields ? [Buffer.from(JSON.stringify(fields))] : []);
+    req.method=fields ? 'POST' : 'GET';
+    req.headers={origin:options.config.origin,'content-type':'application/json'};
     let status,data;const res={writeHead:n=>{status=n;},end:value=>{data=JSON.parse(value);}};
-    await api.route(req,res,new URL('/api/warehouse/claim',options.config.origin),user);return {status,data};
+    await api.route(req,res,new URL(path,options.config.origin),user);return {status,data};
   }
+  const post = fields => request('/api/warehouse/claim',fields);
   const b=await batch(150,2);
+  const browse = await request('/api/warehouse?catalog=1');
+  assert.equal(browse.status,200);
+  assert.deepEqual(browse.data.listedCategories,['email']);
+  assert.deepEqual(browse.data.stats,{available:2,batches:1});
+  assert.equal(browse.data.batches[0].retailUnitRaw,30000);
+  assert.equal(browse.data.batches[0].unitPrice,null);
+  assert.equal(browse.data.claims,undefined);
+  assert.doesNotMatch(JSON.stringify(browse.data),/encrypted|payload|recipientEmail/i);
   const order={requestId:randomUUID(),batchId:b,quantity:2,recipientEmail:'deliver@example.org',quotedUnitRaw:30000,pin:'123456'};
-  assert.equal((await post(order,guest)).status,403);
   assert.equal((await post(order)).status,402);
-  wallet.credit({userId:'staff',reference:'manual',amountRaw:95000});
+  wallet.credit({userId:'shopper',reference:'manual',amountRaw:95000});
   assert.equal((await post({...order,pin:'000000'})).status,400);
   assert.equal((await post({...order,quotedUnitRaw:15000})).status,409);
   assert.equal((await post(order)).status,503);
-  assert.equal(wallet.snapshot('staff').heldRaw,60000);
+  assert.equal(wallet.snapshot('shopper').heldRaw,60000);
   api=createWarehouse(options);
   await api.recover();
-  assert.equal(wallet.balance('staff'),35000);assert.equal(wallet.snapshot('staff').heldRaw,0);
+  assert.equal(wallet.balance('shopper'),35000);assert.equal(wallet.snapshot('shopper').heldRaw,0);
   assert.equal(sends,1);
   assert.equal((await post(order)).data.totalRaw,60000);
   assert.equal((await post({...order,quantity:1})).status,409);
   assert.equal(sends,1);
   assert.equal((await d1.prepare("SELECT count(*) AS n FROM warehouse_inventory WHERE status='claimed' AND email_status='accepted'").first()).n,2);
+  assert.deepEqual((await request('/api/warehouse?catalog=1')).data,{batches:[],listedCategories:['email'],stats:{available:0,batches:0}});
   const freeBatch=await batch(null,1);
   const free={...order,requestId:randomUUID(),batchId:freeBatch,quantity:1,quotedUnitRaw:0,pin:''};
   const outcomes=await Promise.all([post(free),post({...free,requestId:randomUUID()})]);
   assert.deepEqual(outcomes.map(r=>r.status).sort(),[200,409]);
-  assert.equal(wallet.balance('staff'),35000);
+  assert.equal(wallet.balance('shopper'),35000);
 });

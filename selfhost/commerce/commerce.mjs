@@ -1,3 +1,4 @@
+import { withLocale } from './locale-html.mjs';
 import { canManageAccounts } from '../resource-operations/account-access.mjs';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -72,7 +73,8 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
         'content-security-policy':
           `default-src 'self'; img-src 'self' data: https:; script-src 'self'; style-src 'self'; frame-ancestors ${frameAncestors}; object-src 'none'; base-uri 'none'; form-action 'self'`,
       });
-      res.end(readFileSync(new URL(asset, assetDirectory)));
+      const source = readFileSync(new URL(asset, assetDirectory));
+      res.end(asset.endsWith('.html') ? withLocale(source) : source);
       return true;
     }
     if (path !== addressPost && !path.startsWith('/api/commerce/')) return false;

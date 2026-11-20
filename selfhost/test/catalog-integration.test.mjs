@@ -132,3 +132,18 @@ test('comparison filters and sorting apply across the full catalog before pagina
   assert.equal((await search({location:'SG'})).cache,'location');
   assert.deepEqual(received,[undefined,'SG']);
 });
+
+test('favorites lead the default catalog order even when they were beyond the first page', async () => {
+  const catalog=createEsimCatalog({}, {supplier:{async catalog(){return sample;}}});
+  const search = fields => catalog.response(new URLSearchParams(fields));
+  const favorites = 'cn123,SG_Data,unknown';
+  const first = await search({favorites,limit:'1'});
+  const second = await search({favorites,limit:'1',offset:'1'});
+  const third = await search({favorites,limit:'1',offset:'2'});
+  assert.deepEqual([first,second,third].map(result => result.body.items[0].id),
+    ['SG_Data','CN_Data','ID_Data']);
+  const restricted = await search({ids:'ID_Data,CN_Data',favorites,region:'ID'});
+  assert.deepEqual(restricted.body.items.map(plan => plan.id), ['ID_Data']);
+  const requestedOrder = await search({favorites,sort:'price',direction:'asc'});
+  assert.deepEqual(requestedOrder.body.items.map(plan => plan.id), ['ID_Data','SG_Data','CN_Data']);
+});

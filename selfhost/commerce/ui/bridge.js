@@ -88,7 +88,8 @@
     const nav = document.querySelector('aside nav');
     if (!nav) return;
     const items = [...nav.querySelectorAll('button,a')];
-    const trigger = items.find((el) => el.textContent.trim() === '我的购买');
+    const labelOf = (element) => (window.LumenLocale?.originalText(element) ?? element.textContent).trim();
+    const trigger = items.find((el) => labelOf(el) === '我的购买');
     if (!trigger) return;
     let walletNav = nav.querySelector('#lumen-wallet-link');
     if (!walletNav) {
@@ -102,10 +103,10 @@
     }
     if (showingWallet) walletNav.setAttribute('aria-current', 'page');
     else walletNav.removeAttribute('aria-current');
-    const legacyWallet = items.find((el) => ['我的钱包', '账户余额'].includes(el.textContent.trim()));
+    const legacyWallet = items.find((el) => ['我的钱包', '账户余额'].includes(labelOf(el)));
     if (legacyWallet) legacyWallet.dataset.lumenLegacyWallet = '';
     if (snapshot?.canManageAccounts && !nav.querySelector('#lumen-employees-link')) {
-      const existing = items.find((el) => ['账号与额度', '合伙人与额度'].includes(el.textContent.trim()));
+      const existing = items.find((el) => ['账号与额度', '合伙人与额度'].includes(labelOf(el)));
       if (existing) {
         existing.dataset.lumenLegacyWallet = '';
         const staff = link('合伙人与额度', '/__host/accounts', trigger.className);

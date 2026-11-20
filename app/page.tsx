@@ -186,6 +186,7 @@ type WarehouseBatch = {
   supplier: string;
   productName: string;
   category: string;
+  marketCategories?: string[];
   country: string | null;
   unitPrice: number | null;
   currency: string;
@@ -227,6 +228,7 @@ type WarehouseResponse = {
   emailConfigured: boolean;
   stats: { available: number; claimed: number; batches: number };
   batches: WarehouseBatch[];
+  listedCategories?: string[];
   claims: WarehouseClaim[];
 };
 
@@ -878,7 +880,7 @@ export default function Home() {
           <MarketCategoryHeader label={market.category.label} onBack={() => market.choose(null)} />
         )}
         {view === "store" && market.category && market.category.id !== "esim" && (
-          isCustomer ? <RestrictedWarehouse marketPreview /> : viewer && <WarehouseView key={market.category.id} marketCategory={market.category.id} />
+          viewer && <WarehouseView key={market.category.id} marketCategory={market.category.id} />
         )}
         {showEsimMarket && (
           <StoreView
@@ -923,7 +925,7 @@ export default function Home() {
           />
         )}
         {view === "history" && <HistoryView overview={overview} />}
-        {view === "warehouse" && (isCustomer ? <RestrictedWarehouse /> : viewer && <WarehouseView />)}
+        {view === "warehouse" && viewer && <WarehouseView />}
         {view === "samples" && <SupplierTemplateLibrary key="address-generator" selectionMode initialTemplateId={addressTemplateId} onChooseTemplate={setAddressTemplateId} />}
         {view === "templates" && <SupplierTemplateLibrary key="global-library" onChooseTemplate={(id) => { setAddressTemplateId(id); setView("samples"); }} />}
         {view === "admin" && isAdmin && <AdminView overview={overview} />}
@@ -1147,7 +1149,7 @@ function StoreView(props: StoreViewProps) {
             <span className="px-2 text-xs text-slate-400">
               {isAdmin
                 ? "尚未建立业务分组，可点击右上角创建"
-                : isCustomer ? "业务分组仅向合伙人开放" : "管理员尚未配置业务分组"}
+                : "管理员尚未配置业务分组"}
             </span>
           )}
         </div>
@@ -3784,19 +3786,6 @@ function WarehouseStatusManager({
   );
 }
 
-function RestrictedWarehouse({ marketPreview = false }: { marketPreview?: boolean }) {
-  return (
-    <div className="mx-auto max-w-[1480px] px-5 py-7 md:px-8 md:py-9">
-      {!marketPreview && <h1 className="text-2xl font-semibold tracking-tight md:text-[30px]">库存仓库与资源认领</h1>}
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
-        <LockKeyhole size={20} className="text-[#4267ae]" />
-        <h2 className="mt-3 text-base font-semibold">合伙人账号专用</h2>
-        <p className="mt-2 text-sm text-slate-500">查看公司库存和认领记录需要合伙人权限。</p>
-      </section>
-    </div>
-  );
-}
-
 function WarehouseView({ marketCategory }: { marketCategory?: MarketCategoryId }) {
   const [data, setData] = useState<WarehouseResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -3933,6 +3922,7 @@ function WarehouseView({ marketCategory }: { marketCategory?: MarketCategoryId }
   };
 
   const batches = (data?.batches || []).filter((batch) => !marketCategory || matchesMarketBatch(marketCategory, batch));
+  const unlistedCategory = marketCategory && Array.isArray(data?.listedCategories) && !data.listedCategories.includes(marketCategory);
   const emailLabel = (status: string) => mailStatus(status).label;
 
   return (
@@ -3946,7 +3936,7 @@ function WarehouseView({ marketCategory }: { marketCategory?: MarketCategoryId }
             库存仓库与资源认领
           </h1>
           <p className="mt-2 text-sm text-slate-500">
-            管理员可提前入库，合伙人按需单个或批量认领。
+            管理员可提前入库，按需单个或批量认领。
           </p>
         </div>
         <div
@@ -4077,7 +4067,7 @@ function WarehouseView({ marketCategory }: { marketCategory?: MarketCategoryId }
               </div>
             ) : (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-white py-14 text-center text-sm text-slate-500">
-                当前没有可认领库存
+                {unlistedCategory ? "该分类尚未接入商品。" : "当前没有可认领库存"}
               </div>
             )}
           </section>

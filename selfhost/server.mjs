@@ -4,6 +4,7 @@ import { createArchiveDownloads } from './commerce/archive-downloads.mjs';
 import { createWallet, migrateQuotas } from './commerce/wallet.mjs';
 import { createDeposits } from './commerce/deposits.mjs';
 import { createCommerce, loadUsdtConfig } from './commerce/commerce.mjs';
+import { serveLocaleAsset, withLocale } from './commerce/locale-html.mjs';
 import path from 'node:path';
 import { readFileSync, statSync, createReadStream } from 'node:fs';
 import { openIdentityStore } from './resource-operations/session-store.mjs';
@@ -85,7 +86,8 @@ const server = https.createServer(tls, async (req, res) => {
     const url = new URL(req.url, origin);
     const allowedOrigins = new Set([origin, ...(config.aliasOrigins || [])]);
     if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin && !allowedOrigins.has(req.headers.origin)) return json(res, 403, { error: '请求来源不匹配' });
-    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '1.6.0' });
+    if (serveLocaleAsset(req,res,url.pathname)) return;
+    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '1.7.0' });
     // Machine callbacks use the existing order secret, never a browser session.
     if (url.pathname === '/api/address-orders/callback') {
       if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
@@ -194,19 +196,23 @@ const server = https.createServer(tls, async (req, res) => {
       let fields;
       try { fields=JSON.parse(payload.toString()); }
       catch { return json(res,400,{error:'资源状态参数不完整'}); }
-      if (fields?.supplier !== 'eSIMAccess') return json(res,403,{error:'此账号无权访问该资源。'});
+      if (!['eSIMAccess', 'warehouse'].includes(fields?.supplier)) return json(res,403,{error:'此账号无权访问该资源。'});
     }
     const response = await mf.dispatchFetch(url.href, { method: req.method, headers, body: payload, redirect: 'manual' });
     res.statusCode = response.status;
     for (const [key, value] of response.headers) if (!['transfer-encoding', 'content-encoding', 'content-length'].includes(key)) res.setHeader(key, value);
     res.setHeader('x-content-type-options', 'nosniff');
-    if (req.method === 'GET' && url.pathname === '/' && response.headers.get('content-type')?.includes('text/html')) return res.end(enhanceArchiveHtml(await response.text(), session.user).replace('</head>', '<link rel="stylesheet" href="/__host/esim-checkout.css"><link rel="stylesheet" href="/__host/dashboard.css"><link rel="stylesheet" href="/__host/market-table.css"><script defer src="/__host/esim-checkout.js"></script><script defer src="/__host/market-table.js"></script><script defer src="/__host/commerce-bridge.js"></script></head>').replace('</body>', '<script defer src="/__host/resource-operations.js"></script></body>'));
+    if (req.method === 'GET' && url.pathname === '/' && response.headers.get('content-type')?.includes('text/html')) return res.end(withLocale(enhanceArchiveHtml(await response.text(), session.user).replace('</head>', '<link rel="stylesheet" href="/__host/esim-checkout.css"><link rel="stylesheet" href="/__host/dashboard.css"><link rel="stylesheet" href="/__host/market-table.css"><script defer src="/__host/esim-checkout.js"></script><script defer src="/__host/market-table.js"></script><script defer src="/__host/commerce-bridge.js"></script></head>').replace('</body>', '<script defer src="/__host/resource-operations.js"></script></body>')));
+    const localizedPage = url.pathname === '/mail-delivery' || url.pathname.startsWith('/address-orders/');
+    if (req.method === 'GET' && localizedPage && response.headers.get('content-type')?.includes('text/html')) {
+      return res.end(withLocale(await response.text()));
+    }
     if (response.body && req.method !== 'HEAD') await pipeline(Readable.fromWeb(response.body), res); else res.end();
   } catch {
     if (!res.headersSent) json(res, 500, { error: '服务暂时不可用，请稍后重试' }); else res.end();
     console.error(JSON.stringify({ event: 'request_failed', path: req.url?.split('?')[0], time: new Date().toISOString() }));
   }
 });
-server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '1.6.0', port: config.port || 8443 })));
+server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '1.7.0', port: config.port || 8443 })));
 const cleanup = setInterval(() => { identities.cleanup(); for (const [key, value] of attempts) if (value.until < Date.now()) attempts.delete(key); }, 60_000);
 for (const event of ['SIGTERM', 'SIGINT']) process.on(event, () => { clearInterval(cleanup); clearInterval(commerceTimer); deposits.stop(); operations.close(); server.close(async () => { await mf.dispose(); process.exit(0); }); });

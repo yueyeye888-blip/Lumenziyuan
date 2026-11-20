@@ -85,6 +85,9 @@ test('only an explicit customer API surface is allowed and a remote browser cann
   assert.ok(customerEsimRoute('POST','/api/esim/purchases'));
   assert.ok(customerWorkbenchRoute('GET','/api/esim/overview'));
   assert.ok(customerWorkbenchRoute('GET','/'));
+  assert.ok(customerWorkbenchRoute('POST','/api/esim/email'));
+  assert.ok(customerWorkbenchRoute('POST','/api/warehouse/resend'));
+  assert.equal(customerWorkbenchRoute('POST','/api/warehouse/import'),false);
   assert.ok(customerWorkbenchRoute('GET','/api/address-orders/ADDR-20261120-ABC12345'));
   assert.equal(customerWorkbenchRoute('GET','/api/address-orders/callback'),false);
   assert.equal(customerWorkbenchRoute('GET','/_next/static/../../api/warehouse.json'),false);

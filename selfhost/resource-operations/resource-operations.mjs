@@ -1,3 +1,4 @@
+import { withLocale } from '../commerce/locale-html.mjs';
 import { canManageAccounts, viewerFor } from './account-access.mjs';
 import { esimPrice, validDiscount } from '../commerce/pricing.mjs';
 import { readFileSync } from 'node:fs';
@@ -139,7 +140,7 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
         res.end(readFileSync(`${root}/resource-operations/accounts.css`)); return true;
       }
       res.writeHead(200, {'content-type':'text/html; charset=utf-8','cache-control':'private, no-store','content-security-policy':"default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; frame-ancestors 'none'; form-action 'self'"});
-      res.end(readFileSync(`${root}/resource-operations/accounts.html`)); return true;
+      res.end(withLocale(readFileSync(`${root}/resource-operations/accounts.html`))); return true;
     }
     if (url.pathname === '/__host/resource-operations.js' && req.method === 'GET') {
       res.writeHead(200, {'content-type':'application/javascript; charset=utf-8','cache-control':'private, no-store','x-content-type-options':'nosniff'});
@@ -196,7 +197,6 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       sendKey = mailLog.sendKey(user,requestId,to,requested);
       const previous = mailLog.lookup(sendKey);
       if (previous) { json(res,previous.httpStatus,previous.data); return true; }
-      if (!outlook) { json(res,503,{error:'Outlook 发件服务当前不可用。'}); return true; }
     }
     if (exports.has(user.id) || exports.size >= 3) { json(res,429,{error:'已有清单正在处理，请稍后再试。'}); return true; }
     exports.add(user.id);
@@ -205,6 +205,7 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       if (history.status !== 200) { json(res,502,{error:'暂时无法同步已购资源，请稍后重试。'}); return true; }
       const selected = history.data.history.items.filter(item => requested.has(item.esimTranNo));
       if (new Set(selected.map(item => item.esimTranNo)).size !== requested.size) { json(res,403,{error:'所选资源已变更或当前账号无权访问。请刷新后重试。'}); return true; }
+      if (email && !outlook) { json(res,503,{error:'Outlook 发件服务当前不可用。'}); return true; }
       const { buffer, embedded } = await makeEsimWorkbook(selected);
       if (email) {
         if (buffer.length > maxWorkbookBytes) { json(res,413,{error:'附件超过 Outlook 单封邮件的大小限制，请分批勾选后发送。'}); return true; }

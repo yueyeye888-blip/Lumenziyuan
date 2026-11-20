@@ -201,7 +201,7 @@
       refresh();
     }
 
-    mobileSort.add(new Option('默认顺序', ''));
+    mobileSort.add(new Option('收藏优先', ''));
     for (const [key, label] of Object.entries(sortLabel)) {
       mobileSort.add(new Option(label + '从低到高', key + ':asc'));
       mobileSort.add(new Option(label + '从高到低', key + ':desc'));
@@ -350,7 +350,9 @@
     }
 
     function openDetail(plan) {
-      detail.querySelector('h3').textContent = plan.name;
+      const title = detail.querySelector('h3');
+      title.dataset.lumenNoTranslate = '';
+      title.textContent = plan.name;
       const list = detail.querySelector('dl');
       const attributes = [
         ['套餐编号', plan.slug || plan.packageCode],
@@ -393,7 +395,10 @@
       const planCell = node('th', null, 'lmt-plan');
       planCell.scope = 'row';
       const info = node('div', null, 'lmt-plan-info');
-      const name = button(plan.name, 'lmt-product', () => openDetail(plan));
+      const name = button('', 'lmt-product', () => openDetail(plan));
+      const originalName = node('span', plan.name);
+      originalName.dataset.lumenNoTranslate = '';
+      name.append(originalName);
       name.title = '查看套餐详情';
       const shortOperators = operatorNames(plan);
       const firstNames = shortOperators.slice(0, 2).join(' · ');
@@ -418,6 +423,10 @@
         else favorites.add(plan.id);
         markFavorite(event.currentTarget);
         toggleFavorite?.(plan.id);
+        if (!sort && !favoriteOnly) {
+          offset = 0;
+          refresh(plan.id);
+        }
       });
       favorite.dataset.favorite = plan.id;
       favorite.dataset.planName = plan.name;
@@ -472,7 +481,7 @@
       updateSelection();
     }
 
-    async function refresh() {
+    async function refresh(focusId) {
       clearTimeout(queryTimer);
       controller?.abort();
       const request = new AbortController();
@@ -491,6 +500,8 @@
       if (sort) {
         params.set('sort', sort);
         params.set('direction', direction);
+      } else if (favorites.size) {
+        params.set('favorites', [...favorites].join(','));
       }
       params.set('facets', '1');
       params.set('offset', String(offset));
@@ -522,6 +533,11 @@
       busy = false;
       root.removeAttribute('aria-busy');
       renderCatalog();
+      if (typeof focusId === 'string' && root.contains(document.activeElement) === false
+        && document.activeElement === document.body) {
+        const control = tbody.querySelector('button[data-favorite="' + CSS.escape(focusId) + '"]');
+        (control || by('.lmt-results-head h2')).focus({ preventScroll: true });
+      }
     }
 
     by('.lmt-previous').addEventListener('click', () => {
@@ -550,9 +566,14 @@
         if ('balanceRaw' in options) balanceRaw = options.balanceRaw;
         if (options.scopeLabel) by('.lmt-results-head h2').textContent = options.scopeLabel;
         if (options.favoriteOnly !== undefined) favoriteOnly = options.favoriteOnly;
-        if (options.favoriteIds) favorites = new Set(options.favoriteIds);
+        let favoritesChanged = false;
+        if (options.favoriteIds) {
+          const nextFavorites = new Set(options.favoriteIds);
+          favoritesChanged = nextFavorites.size !== favorites.size || [...nextFavorites].some(id => !favorites.has(id));
+          favorites = nextFavorites;
+        }
         if (options.selectedItems) selected = new Map(options.selectedItems.slice(0, maxSelection).map(row => [row.id, row]));
-        if (scopeChanged) {
+        if (scopeChanged || (favoritesChanged && !sort)) {
           offset = 0;
           refresh();
         } else if (queryChanged) {

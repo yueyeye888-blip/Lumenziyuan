@@ -166,7 +166,7 @@ test('new server initializes and serves the complete release using only runtime 
     assert.equal(JSON.parse((await buyer('/api/commerce/address/price')).body).priceRaw,100000);
     assert.equal(JSON.parse((await buyer('/__host/template-archive/catalog')).body).priceRaw,50000);
     assert.equal((await call(port,'/__host/template-archive')).headers.location,'/__host/login?returnTo=%2F__host%2Ftemplate-archive');
-    for(const path of ['/api/operations/accounts','/api/groups','/__host/accounts','/api/warehouse','/api/esim/topups','/api/settings/telegram','/api/commerce/admin/deposits'])
+    for(const path of ['/api/operations/accounts','/api/groups','/__host/accounts','/api/esim/topups','/api/settings/telegram','/api/commerce/admin/deposits'])
       assert.equal((await buyer(path)).status,403,path);
     const adminWallet=JSON.parse((await get('/api/commerce/wallet')).body);
     assert.equal(adminWallet.canManageAccounts,true);
@@ -196,7 +196,40 @@ test('new server initializes and serves the complete release using only runtime 
         'Content-Type':'application/json','Content-Length':Buffer.byteLength(body),Origin:origin}});
     };
     assert.equal((await write('/api/esim/export',buyerCookie,'POST',{ids:['not-owned']})).status,403);
-    assert.equal((await write('/api/esim/email',buyerCookie,'POST',{})).status,403);
+    assert.equal((await write('/api/esim/email',buyerCookie,'POST',{})).status,400);
+    assert.equal((await write('/api/esim/email',buyerCookie,'POST',{
+      ids:['not-owned'],recipient:'test@example.invalid',requestId:crypto.randomUUID(),
+    })).status,403);
+    assert.equal((await call(port,'/api/warehouse?catalog=1')).status,401);
+    assert.equal((await call(port,'/api/esim/email',{method:'POST',body:'{}'})).status,401);
+    const unconnected = await buyer('/api/warehouse?catalog=1');
+    assert.equal(unconnected.status,200);
+    assert.deepEqual(JSON.parse(unconnected.body),{batches:[],listedCategories:[],stats:{available:0,batches:0}});
+    const sampleStock = {supplier:'Fixture stock',productName:'Gmail account',category:'邮箱',country:'US',items:['isolated-credential-fixture']};
+    assert.equal((await write('/api/warehouse/import',buyerCookie,'POST',sampleStock)).status,403);
+    const imported = await write('/api/warehouse/import',session,'POST',sampleStock);
+    assert.equal(imported.status,200,imported.body);
+    const {batchId} = JSON.parse(imported.body);
+    const browsed = JSON.parse((await buyer('/api/warehouse')).body);
+    assert.deepEqual(browsed.listedCategories,['email']);
+    assert.equal(browsed.batches[0].available,1);
+    assert.equal(browsed.batches[0].batchId,batchId);
+    assert.doesNotMatch(JSON.stringify(browsed),/isolated-credential-fixture|encryptedValue/);
+    const claim = await write('/api/warehouse/claim',buyerCookie,'POST',{
+      batchId,requestId:crypto.randomUUID(),quantity:1,quotedUnitRaw:0,recipientEmail:'buyer@example.invalid',
+    });
+    assert.equal(claim.status,200,claim.body);
+    const sold = JSON.parse((await buyer('/api/warehouse')).body);
+    assert.deepEqual(sold.batches,[]);
+    assert.deepEqual(sold.listedCategories,['email']);
+    assert.equal(sold.claims[0].payload,sampleStock.items[0]);
+    const claimId=sold.claims[0].id;
+    assert.equal((await write('/api/resources/status',buyerCookie,'POST',{
+      supplier:'warehouse',resourceId:claimId,status:'normal',
+    })).status,200);
+    const partner = JSON.parse((await call(port,'/api/warehouse',{cookie:empCookie})).body);
+    assert.deepEqual(partner.claims,[]);
+    assert.equal((await write('/api/warehouse/resend',empCookie,'POST',{id:claimId})).status,404);
     assert.equal((await write('/api/addresses/normalize',buyerCookie,'POST',{address:'Private address'})).status,403);
     assert.equal((await write('/api/resources/status',buyerCookie,'POST',{supplier:'warehouse',resourceId:'not-owned',status:'normal'})).status,403);
     assert.equal((await write('/api/resources/status',buyerCookie,'POST',{supplier:'eSIMAccess',resourceId:'not-owned',status:'normal'})).status,403);

@@ -132,13 +132,16 @@ export function customerEsimRoute(method, pathname) {
   return method === 'GET' && customerGet.has(pathname) || method === 'POST' && customerPost.has(pathname);
 }
 
+const customerWorkbenchPost = new Set([
+  '/api/esim/export', '/api/esim/email', '/api/warehouse/resend', '/api/resources/status',
+]);
 const customerWorkbenchGet = new Set([
   '/', '/favicon.svg', '/mail-delivery', '/api/session', '/api/esim/overview',
   '/api/mail-deliveries', '/api/supplier-templates', '/api/addresses/normalize',
   '/__host/esim-checkout.js', '/__host/esim-checkout.css', '/__host/resource-operations.js',
 ]);
 export function customerWorkbenchRoute(method, pathname) {
-  if (method === 'POST') return pathname === '/api/esim/export' || pathname === '/api/resources/status';
+  if (method === 'POST') return customerWorkbenchPost.has(pathname);
   if (method !== 'GET') return false;
   return customerWorkbenchGet.has(pathname)
     || /^\/(?:api\/)?address-orders\/ADDR-[0-9]{8}-[A-Z0-9]{8}$/.test(pathname)

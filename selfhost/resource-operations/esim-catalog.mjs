@@ -83,8 +83,14 @@ const sortKeys = {
   unitPrice: row => row.pricePerGbRaw,
 };
 
-function orderRows(rows, key, descending) {
-  if (!Object.hasOwn(sortKeys,key)) return;
+function orderRows(rows, key, descending, favorites) {
+  if (!Object.hasOwn(sortKeys,key)) {
+    if (favorites.size) {
+      const favorited = ({ item }) => favorites.has(item.id) || favorites.has(item.packageCode);
+      rows.sort((left,right) => Number(favorited(right)) - Number(favorited(left)));
+    }
+    return;
+  }
   const valueOf = sortKeys[key];
   rows.sort((left,right) => {
     const l = valueOf(left), r = valueOf(right);
@@ -205,7 +211,8 @@ export function createEsimCatalog(bindings, { supplier = createEsimSupplier(bind
       if (query && !(entry.search ??= searchText(plan)).includes(query)) continue;
       filtered.push({ item, priceRaw, pricePerGbRaw:perGbPrice(item,priceRaw) });
     }
-    orderRows(filtered,params.get('sort'),params.get('direction') === 'desc');
+    const favorites = new Set((params.get('favorites') || '').slice(0,8000).split(',').slice(0,500).filter(Boolean));
+    orderRows(filtered,params.get('sort'),params.get('direction') === 'desc',favorites);
     return { cache, body:{
       connected:true, total:filtered.length, limit, offset, hasMore:offset+limit<filtered.length,
       items:filtered.slice(offset,offset+limit).map(({item,priceRaw,pricePerGbRaw}) => ({

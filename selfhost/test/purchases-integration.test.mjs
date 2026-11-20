@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
 import { createHmac, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { once } from 'node:events';
 import http from 'node:http';
 import { testWallet } from './wallet-fixture.mjs';
 import { test } from 'node:test';
 import { createEsimPurchases } from '../resource-operations/esim-purchases.mjs';
 import { createEsimSupplier } from '../resource-operations/esim-supplier.mjs';
+import { makeResourceOperations } from '../resource-operations/resource-operations.mjs';
+import JSZip from '../resource-operations/jszip.cjs';
 
 const origin = 'https://test.example';
 const admin = { id:'admin', email:'admin@test.example' };
@@ -69,17 +73,34 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
   });
   const customer = {...stranger,id:'public',email:'customer@test.example',role:'customer'};
   const funds = testWallet({staff:200_000});
+  async function readBody(req) {
+    const chunks=[];
+    for await (const part of req) chunks.push(part);
+    return Buffer.concat(chunks);
+  }
   const api = createEsimPurchases({wallet:funds,
-    config:{origin,bindings},mf,identities:{list:() => [admin,staff,stranger]},supplier,
-    readBody:async req => {
-      const chunks=[];
-      for await (const part of req) chunks.push(part);
-      return Buffer.concat(chunks);
-    },
+    config:{origin,bindings},mf,identities:{list:() => [admin,staff,stranger]},supplier,readBody,
   });
-  const identities = Object.fromEntries([admin,staff,stranger,customer].map(user => [user.id,user]));
+  const mailRoot = mkdtempSync(path.join(tmpdir(),'lumen-esim-email-'));
+  mkdirSync(path.join(mailRoot,'data'));
+  const sentWorkbooks = [];
+  const operations = makeResourceOperations({
+    root:mailRoot,config:{origin,bindings},mf,wallet:funds,purchases:api,readBody,
+    outlook:{sendEsimWorkbook:async mail => {
+      sentWorkbooks.push(mail);
+      return {status:'accepted'};
+    }},
+  });
+  const otherBuyer = { id:'second-customer',email:'second-customer@test.example',role:'customer' };
+  const identities = Object.fromEntries([admin,staff,stranger,customer,otherBuyer].map(user => [user.id,user]));
   const server = http.createServer(async (req,res) => {
-    if (!await api.route(req,res,new URL(req.url,origin),identities[req.headers['x-test-user']])) res.writeHead(404).end();
+    const user = identities[req.headers['x-test-user']];
+    const url = new URL(req.url,origin);
+    try {
+      if (!await api.route(req,res,url,user) && !await operations.route(req,res,url,user)) res.writeHead(404).end();
+    } catch (error) {
+      res.writeHead(500).end(JSON.stringify({error:error.message}));
+    }
   });
   try {
     const migrations = ['0000_empty_killraven','0001_fuzzy_skullbuster','0002_sour_jack_flag','0003_dark_paladin','0004_unique_luckman'];
@@ -225,6 +246,22 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     assert.deepEqual(own.items.map(({profile})=>profile.esimTranNo),[cardCheck.data.cards[0].resourceId]);
     assert.deepEqual(queriedOrders.slice(queriedBefore),[selfService.data.order.orderNo]);
     assert.equal(own.partial,false);
+    const emailPath = '/api/esim/email';
+    const delivery = {ids:[resourceId],recipient:'buyer-inbox@example.invalid',requestId:randomUUID()};
+    const notOwned = await request(emailPath,customer,{...delivery,ids:[resourceId,owned[0].resource_id]});
+    assert.equal(notOwned.status,403);
+    assert.equal(sentWorkbooks.length,0);
+    const mailed = await request(emailPath,customer,delivery);
+    assert.equal(mailed.status,202,JSON.stringify(mailed.data));
+    assert.equal((await request(emailPath,customer,delivery)).status,202);
+    assert.equal(sentWorkbooks.length,1);
+    assert.equal(sentWorkbooks[0].to,delivery.recipient);
+    assert.equal(sentWorkbooks[0].count,1);
+    const workbook = await JSZip.loadAsync(sentWorkbooks[0].buffer);
+    const sheet = await workbook.file('xl/worksheets/sheet1.xml').async('string');
+    assert.ok(sheet.includes(resourceId) && !sheet.includes(owned[0].resource_id));
+    assert.equal((await request(emailPath,otherBuyer,delivery)).status,403);
+    assert.equal(sentWorkbooks.length,1);
     // Simulate a process exit after the balance hold and before a vendor request;
     // an accepted order with an interrupted local settlement must be replayed once.
     const beforeRestart=funds.balance(customer.id);
@@ -264,6 +301,8 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     assert.equal(submitted.length,count);
   } finally {
     server.close();
+    operations.close();
+    rmSync(mailRoot,{recursive:true,force:true});
     await mf.dispose(); funds.close();
   }
 });

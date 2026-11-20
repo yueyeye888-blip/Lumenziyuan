@@ -6,6 +6,19 @@ import { canManageAccounts } from '../resource-operations/account-access.mjs';
 
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const emailValid = email => typeof email==='string' && email.length<=254 && /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(email);
+function marketCategories({ category, productName, country }) {
+  const description = category + ' ' + productName;
+  const categories = [];
+  if (/邮箱|邮件账号|電子郵箱|電子郵件|\be[ -]?mail\b|\bmailbox\b|gmail|outlook|hotmail|proton\s*mail|yahoo\s*mail/i.test(description)) {
+    categories.push('email');
+  }
+  if (/手机|電話|电话|号码|號碼|phone|mobile|\+372|SIM\s*卡/i.test(description)
+      && /爱沙尼亚|愛沙尼亞|Estonia|\+372|\bEE\b/i.test((country || '') + ' ' + description)) {
+    categories.push('estonia-mobile');
+  }
+  return categories;
+}
+
 const send=(res,status,data)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'private, no-store'});res.end(JSON.stringify(data));return true;};
 async function body(req) {
   let bytes=0; const chunks=[];
@@ -142,19 +155,51 @@ export function createWarehouse({wallet,db,mf,config,outlook,verifyPin,fetchImpl
     const orders=db.prepare("SELECT id FROM stock_orders WHERE state IN ('holding','fulfilled') AND published=0 ORDER BY created LIMIT 20").all();
     for (const order of orders) await run(order.id).catch(()=>{});
   }
+  async function catalog(user) {
+    const d1 = await mf.getD1Database('DB');
+    const { results } = await d1.prepare(`SELECT batch_id AS batchId, supplier, product_name AS productName,
+      category, country, unit_price AS unitPrice, currency, MAX(created_at) AS createdAt,
+      COUNT(CASE WHEN status='available' THEN 1 END) AS available
+      FROM warehouse_inventory GROUP BY batch_id, supplier, product_name, category, country, unit_price, currency
+      ORDER BY createdAt DESC`).all();
+
+    const listedCategories = new Set();
+    const listed = [];
+    let available = 0;
+    for (const row of results) {
+      const categories = marketCategories(row);
+      for (const category of categories) listedCategories.add(category);
+      if (row.available <= 0) continue;
+      listed.push({ ...row, marketCategories: categories });
+      available += row.available;
+    }
+    const atCost = canManageAccounts(config,user);
+    const batches = await Promise.all(listed.map(async (item) => {
+      const published = atCost ? item : { ...item, unitPrice:null, currency:'USD' };
+      try {
+        return { ...published, ...await price(item.unitPrice,item.currency,user,atCost) };
+      } catch {
+        return { ...published, retailUnitRaw:null,priceLabel:'暂不可认领',rateNote:'无法确认此批次售价' };
+      }
+    }));
+    return { batches, listedCategories:[...listedCategories], stats:{ available, batches:batches.length } };
+  }
+
   async function route(req,res,url,user) {
     if (!['/api/warehouse','/api/warehouse/claim'].includes(url.pathname)) return false;
-    if (user.role==='customer') return send(res,403,{error:'此库存仅向合伙人开放。'});
     try {
       if (url.pathname==='/api/warehouse' && req.method==='GET') {
-        const result=await mf.dispatchFetch(new URL('/api/warehouse',config.origin).href,{headers:trustedHeaders({},user)});
-        const data=await result.json();
+        if (url.searchParams.get('catalog') === '1') return send(res,200,await catalog(user));
+        const [market,result] = await Promise.all([
+          catalog(user),
+          mf.dispatchFetch(new URL('/api/warehouse',config.origin).href,{headers:trustedHeaders({},user)}),
+        ]);
+        const data = await result.json();
         if (!result.ok) return send(res,result.status,data);
-        data.batches=await Promise.all(data.batches.map(async item=>{
-          try{return {...item,...await price(item.unitPrice,item.currency,user,canManageAccounts(config,user))};}
-          catch {return {...item,retailUnitRaw:null,priceLabel:'暂不可认领',rateNote:'无法确认此批次售价'};}
-        }));
-        return send(res,200,data);
+        const claims = user.role === 'customer'
+          ? data.claims.map(claim => ({ ...claim, unitPrice:null, currency:'USD' }))
+          : data.claims;
+        return send(res,200,{ ...data, ...market, claims, stats:{...data.stats,...market.stats} });
       }
       if (url.pathname!=='/api/warehouse/claim' || req.method!=='POST') return send(res,405,{error:'请求方式不支持。'});
       if (!origins.has(req.headers.origin) || !/^application\/json\b/i.test(req.headers['content-type']||'')) throw fault(403,'请在本站完成认领。');
@@ -169,7 +214,11 @@ export function createWarehouse({wallet,db,mf,config,outlook,verifyPin,fetchImpl
       const order=get(id);
       if (order.batch!==fields.batchId || order.quantity!==fields.quantity || order.recipient!==fields.recipientEmail || order.unit_raw!==fields.quotedUnitRaw) throw fault(409,'认领请求与原订单不符。');
       return send(res,200,await run(id));
-    }catch(err){return send(res,err.status||err.statusCode||503,{error:err.status||err.statusCode?err.message:'认领状态待核对，请使用原请求重试。'});}
+    } catch (error) {
+      const status = error.status || error.statusCode;
+      const message = req.method === 'GET' ? '仓库加载失败' : '认领状态待核对，请使用原请求重试。';
+      return send(res,status || 503,{error:status ? error.message : message});
+    }
   }
   return {route,recover};
 }

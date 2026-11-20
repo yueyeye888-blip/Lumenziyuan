@@ -1,3 +1,4 @@
+import { withLocale } from './commerce/locale-html.mjs';
 import { createHash } from 'node:crypto';
 
 const escape = value => String(value || '').replace(/[&<>"']/g, c => ({
@@ -263,9 +264,9 @@ const scriptHash = createHash('sha256').update(passwordToggle).digest('base64');
 function page(res, status, title, content) {
   res.writeHead(status, {
     'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'same-origin',
-    'content-security-policy':`default-src 'none'; script-src 'sha256-${scriptHash}'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,
+    'content-security-policy':`default-src 'none'; script-src 'self' 'sha256-${scriptHash}'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,
   });
-  res.end(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  res.end(withLocale(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <title>${title} · Lumen 资源中心</title><style>${styles}</style></head><body>
     <header><div class="masthead"><a class="brand" aria-label="Lumen 资源中心首页" href="/"><span class="mark" aria-hidden="true">L</span>Lumen<small>资源中心</small></a></div></header>
     <main><div class="auth-layout">
@@ -276,7 +277,7 @@ function page(res, status, title, content) {
       </div>
       <section class="card" aria-labelledby="title"><h1 id="title">${title}</h1>${content}</section>
     </div></main>
-    <script>${passwordToggle}</script></body></html>`);
+    <script>${passwordToggle}</script></body></html>`));
 }
 
 function notice(error, message) {
