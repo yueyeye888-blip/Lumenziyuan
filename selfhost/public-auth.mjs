@@ -245,7 +245,7 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outlin
 }
 `;
 
-const passwordToggle = `document.querySelectorAll('[data-reveal]').forEach(button => {
+const authScript = `document.querySelectorAll('[data-reveal]').forEach(button => {
   const input = document.getElementById(button.getAttribute('aria-controls'));
   button.hidden = false;
   button.addEventListener('click', () => {
@@ -256,10 +256,27 @@ const passwordToggle = `document.querySelectorAll('[data-reveal]').forEach(butto
     button.setAttribute('aria-pressed', String(show));
   });
 });
-window.addEventListener('pageshow', event => {
-  if (event.persisted) document.querySelector('[data-fresh-login]')?.reset();
-});`;
-const scriptHash = createHash('sha256').update(passwordToggle).digest('base64');
+const loginForm = document.querySelector('[data-fresh-login]');
+if (loginForm) {
+  const fields = loginForm.querySelectorAll('input:not([type="hidden"])');
+  function resetLoginFields() {
+    loginForm.reset();
+    fields.forEach(input => {
+      if (document.activeElement === input) input.blur();
+      input.readOnly = true;
+    });
+  }
+  resetLoginFields();
+  fields.forEach(input => {
+    const enableEntry = () => { input.readOnly = false; };
+    input.addEventListener('pointerdown', enableEntry);
+    input.addEventListener('focus', enableEntry);
+  });
+  window.addEventListener('pageshow', event => {
+    if (event.persisted) resetLoginFields();
+  });
+}`;
+const scriptHash = createHash('sha256').update(authScript).digest('base64');
 
 function page(res, status, title, content) {
   res.writeHead(status, {
@@ -277,7 +294,7 @@ function page(res, status, title, content) {
       </div>
       <section class="card" aria-labelledby="title"><h1 id="title">${title}</h1>${content}</section>
     </div></main>
-    <script>${passwordToggle}</script></body></html>`));
+    <script>${authScript}</script></body></html>`));
 }
 
 function notice(error, message) {
@@ -292,8 +309,9 @@ function emailInput(email='') {
 }
 
 function passwordInput(isNew, label) {
+  // The sign-in form starts blank. The new-password hint discourages credential autofill.
   return `<div class="field"><div class="field-head"><label for="password">${label}</label>${isNew ? '' : '<a href="/__host/forgot">忘记密码？</a>'}</div>
-    <div class="password"><input id="password" name="password" type="password" autocomplete="${isNew ? 'new-password' : 'current-password'}"
+    <div class="password"><input id="password" name="password" type="password" autocomplete="new-password"
     ${isNew ? 'minlength="12" aria-describedby="password-hint"' : ''} maxlength="128" required>
     <button hidden data-reveal type="button" aria-controls="password" aria-label="显示密码" aria-pressed="false" class="reveal">显示</button></div>
     ${isNew ? '<small class="hint" id="password-hint">使用 12–128 个字符。</small>' : ''}</div>`;

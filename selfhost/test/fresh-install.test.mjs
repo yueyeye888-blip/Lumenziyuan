@@ -78,7 +78,16 @@ test('new server initializes and serves the complete release using only runtime 
     assert.equal(health?.status,200,logs);
     assert.equal(JSON.parse(health.body).ok,true);
     // Chromium sends Origin: null on form POST if the login page suppresses all referrers.
-    assert.equal((await call(port,'/__host/login')).headers['referrer-policy'],'same-origin');
+    const loginPage=await call(port,'/__host/login');
+    assert.equal(loginPage.headers['referrer-policy'],'same-origin');
+    assert.equal(loginPage.headers['cache-control'],'no-store');
+    assert.doesNotMatch(loginPage.body,/levi@lumen\.com/i);
+    for (const [name, autocomplete] of [['email','off'],['password','new-password']]) {
+      const input=loginPage.body.match(new RegExp(`<input\\b[^>]*name="${name}"[^>]*>`))?.[0];
+      assert.ok(input, `${name} input`);
+      assert.doesNotMatch(input,/\bvalue=/);
+      assert.ok(input.includes(`autocomplete="${autocomplete}"`));
+    }
     assert.equal((await call(port,'/api/esim/renewals')).status,401);
     assert.equal((await call(port,'/api/address-orders/callback',{method:'POST',body:'{}'})).status,401);
     const login=await call(port,'/__host/login',{method:'POST',

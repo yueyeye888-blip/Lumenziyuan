@@ -1,5 +1,5 @@
 {
-  "version": "2026.11.20-commerce.8",
+  "version": "2026.11.20-commerce.9",
   "source": "YorkeAI self-host runtime",
   "includedReleases": [
     "mail-delivery",
@@ -17,7 +17,8 @@
     "shared-resource-workbench-v1.4.0",
     "market-comparison-and-catalog-filters-v1.5.0",
     "market-categories-partner-labels-and-open-archive-v1.6.0",
-    "public-market-and-bilingual-interface-v1.7.0"
+    "public-market-and-bilingual-interface-v1.7.0",
+    "blank-login-fields-v1.7.1"
   ],
   "portabilityChanges": [
     "authorize-site-outlook.mjs",
@@ -212,10 +213,10 @@
     "drizzle/meta/_journal.json": "83707552cb2e8464125bf6da9d6391a8f86273e98adc25ff1da77afdc6436734",
     "initialize.mjs": "32dd89b9b7439f20822c2a723bc9a9dc06371464c130d2b472d210eb22473ff9",
     "outlook-mail.mjs": "bfaa0e528b3410949e1881490c867a4fb91247715d798173d2b3b9cf335a4437",
-    "package-lock.json": "505f800368f9629f152341d1e83647ef4872cc5fa32fcef6547a693300610d6f",
-    "package.json": "1a72fa40acdd142267352239f2c30f3445cc60136ff5cbf349bb0e90b445f465",
+    "package-lock.json": "76f0554eb00ff6f5374df43be55842dbb7045337b21d72c49017fb5c448c812c",
+    "package.json": "5a30c6515f2665fafd786ff09537e54ba0c4b8fd27340a147159d65d892a0c4f",
     "private-template-archive.mjs": "a2dfa8fdee516af9b3f83a0c69fda1c47fb35b6ac9132308b36754fffe122c1f",
-    "public-auth.mjs": "2be85cb63c1a0861a9edfad9b1d80e0e5ec5047d4368d854e98dfa2029f238aa",
+    "public-auth.mjs": "c7958030312a2c2b8ac86d079b9d371a75cf706b970826f08a486e0605e69ce8",
     "registration.mjs": "cf3d1b7188529a92ed3f93fe6c96d3534727f72e6f412ba87a5287d4263c180f",
     "resource-operations/account-access.mjs": "c3bd0b8e2e0979f3d4db5efa58737f396841cada16a815b2478a0a33d3b0ea99",
     "resource-operations/accounts.css": "1834553f7f2e15a71d9c7657acb8d5598a33d1472d43ea441e3de7cbcb21765a",
@@ -236,7 +237,7 @@
     "resource-operations/session-store.mjs": "45c7ff900b9eee37d418e55edab9562683a57196553904f410ad9b07520bc77f",
     "runtime.mjs": "058ff08d79a697a45f5f08cf991992612501c0b10f1c92a0eb675d43aff88340",
     "sample-mail-attachments.mjs": "70dcc3db130e03e072bf24e9d49dd6d35b2601bfc5b22e0d7adc9ed20f6ae337",
-    "server.mjs": "5268271d0ce5a669ed07d8c83f8f3fb70480c7a7b25ada6689c24e6eb03ddd1e",
+    "server.mjs": "d82037fa3785b3d47637805c4798a9adf173ff761598c6f6aade80d473b3fcd5",
     "setup.mjs": "cf977ed6d85ee23ade8278f8bc3205605b5487ef47a40da9259592918120b0fa",
     "site-order-queue.mjs": "4650ae04a15eb52e0e459555fe373c4cf9ab0225f8e8bd7c6644858a16f605ed",
     "template-library-ui/app.js": "be18e984f6fad0ce3567afe55c39e8e5583c8bd547c3052fa1e40406a58dea77",
@@ -246,7 +247,7 @@
     "test/archive-download-integration.test.mjs": "007c9dd9c967a820700a1a5b04d67614a28e715aa259325d696b1522db0ff80c",
     "test/catalog-integration.test.mjs": "eef6a1841fa56f6161439297b0e1f575469355d91df9b191145d8e4303bc19c4",
     "test/deposits-integration.test.mjs": "f09694330038b21e4d64de7ec31d51ef00d33d15f18a6f73c03bdcd05d2f890f",
-    "test/fresh-install.test.mjs": "519eec89e75209b69e6e5a67436fe99c4a91fefad24d6932cb95292e51089d9b",
+    "test/fresh-install.test.mjs": "bef2b292ecd42bdde45efe1e0d9072ab8257af968096a319354cf0e751445a9e",
     "test/purchases-integration.test.mjs": "7defa2adcaab8e2d37f9a746403c49589473ffc97e43b14cc6113b84aebc7be0",
     "test/registration-integration.test.mjs": "139d0612c5e7798da420b71c17a9eea6774fe63d8c9c359ad8541178ccf62e9b",
     "test/renewal-integration.test.mjs": "f4e3f6f15c07afb9491374488aaa0733fe95022d98bf5c69c2b50189b3aa1d46",
