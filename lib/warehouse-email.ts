@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { mailConfigured, submitMail } from "@/lib/mail-delivery";
 
 export type DeliveryItem = {
   productName: string;
@@ -17,7 +17,7 @@ function escapeHtml(value: string) {
 }
 
 export function emailDeliveryConfigured() {
-  return Boolean(env.RESEND_API_KEY && env.DELIVERY_EMAIL_FROM);
+  return mailConfigured();
 }
 
 export async function sendWarehouseDelivery(input: {
@@ -40,25 +40,10 @@ export async function sendWarehouseDelivery(input: {
     </section>`
   ).join("");
 
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${env.RESEND_API_KEY}`,
-      "content-type": "application/json",
-      "idempotency-key": `lumen-warehouse/${input.claimId}`,
-    },
-    body: JSON.stringify({
-      from: env.DELIVERY_EMAIL_FROM,
-      to: [input.recipientEmail],
-      subject: `Lumen 资源交付 · ${input.items.length} 项资源`,
-      text: `你已在 Lumen 资源申购中心认领 ${input.items.length} 项资源。\n\n${plainItems}\n\n请妥善保管敏感信息，并尽快修改可修改的密码及安全设置。`,
-      html: `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#172033"><h2 style="color:#1d3b72">Lumen 资源交付</h2><p>你已认领 <strong>${input.items.length}</strong> 项资源，详情如下：</p>${htmlItems}<p style="margin-top:20px;font-size:12px;color:#8a94a6">该邮件包含敏感交付信息，请勿转发。请尽快修改可修改的密码及安全设置。</p></div>`,
-    }),
+  return submitMail(`lumen-warehouse/${input.claimId}`, {
+    to: input.recipientEmail,
+    subject: `Lumen 资源交付 · ${input.items.length} 项资源`,
+    text: `你已在 Lumen 资源申购中心认领 ${input.items.length} 项资源。\n\n${plainItems}\n\n请妥善保管敏感信息。`,
+    html: `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#172033"><h2 style="color:#1d3b72">Lumen 资源交付</h2><p>你已认领 <strong>${input.items.length}</strong> 项资源，详情如下：</p>${htmlItems}<p style="font-size:12px;color:#8a94a6">该邮件包含敏感交付信息，请勿转发。</p></div>`,
   });
-
-  const result = await response.json().catch(() => ({})) as { id?: string; message?: string; name?: string };
-  if (!response.ok) {
-    return { ok: false as const, status: "failed" as const, error: result.message || result.name || `邮件服务返回 ${response.status}` };
-  }
-  return { ok: true as const, status: "sent" as const, providerId: result.id || null };
 }

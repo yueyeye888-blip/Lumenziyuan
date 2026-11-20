@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import SupplierTemplateLibrary from "@/components/supplier-template-library";
+import { mailStatus } from "@/lib/mail-status.mjs";
 import {
   AlertTriangle,
   Archive,
@@ -708,6 +709,7 @@ export default function Home() {
                 active={view === "history"}
                 onClick={() => setView("history")}
               />
+              <a href="/mail-delivery" className="mt-1 flex items-center gap-3 rounded-xl px-4 py-3 text-sm text-blue-100 hover:bg-white/[.06]"><Mail size={18} />邮件交付记录</a>
             </>
           )}
         </nav>
@@ -3806,8 +3808,8 @@ function WarehouseView() {
     }
     setClaimBatch(null);
     setNotice(
-      result.emailStatus === "sent"
-        ? `已认领 ${result.claimed} 项，交付邮件已发送至 ${recipientEmail}`
+      ["accepted", "sent"].includes(result.emailStatus || "")
+        ? `已认领 ${result.claimed} 项，邮件服务已接受发送请求；请查看 ${recipientEmail} 的收件箱和垃圾邮箱`
         : `已认领 ${result.claimed} 项并保存到站内；${result.emailError || "邮件等待发送"}`,
     );
     window.setTimeout(() => setNotice(""), 6500);
@@ -3862,19 +3864,12 @@ function WarehouseView() {
       setError(result.error || "邮件重发失败");
       return;
     }
-    setNotice("交付邮件已重新发送");
+    setNotice("邮件服务已接受发送请求；请查看收件箱和垃圾邮箱");
     window.setTimeout(() => setNotice(""), 4200);
     await load();
   };
 
-  const emailLabel = (status: string) =>
-    status === "sent"
-      ? "邮件已发送"
-      : status === "failed"
-        ? "邮件发送失败"
-        : status === "pending"
-          ? "邮件待发送"
-          : "尚未发送";
+  const emailLabel = (status: string) => mailStatus(status).label;
 
   return (
     <div className="mx-auto max-w-[1480px] px-5 py-7 md:px-8 md:py-9">
@@ -4067,7 +4062,7 @@ function WarehouseView() {
                             {claim.supplier}
                           </span>
                           <span
-                            className={`${claim.emailStatus === "sent" ? "bg-[#e9f8f2] text-[#177359]" : "bg-[#fff4e5] text-[#a76a2a]"} rounded-full px-2.5 py-1 text-[10px]`}
+                            className={`${["accepted", "sent", "delivered"].includes(claim.emailStatus) ? "bg-[#edf2fb] text-[#315c9f]" : "bg-[#fff4e5] text-[#a76a2a]"} rounded-full px-2.5 py-1 text-[10px]`}
                           >
                             {emailLabel(claim.emailStatus)}
                           </span>
@@ -4100,7 +4095,7 @@ function WarehouseView() {
                             ? "隐藏内容"
                             : "查看内容"}
                         </button>
-                        {claim.emailStatus !== "sent" && (
+                        {mailStatus(claim.emailStatus).canRetry && (
                           <button
                             onClick={() => void retryEmail(claim.id)}
                             className="inline-flex items-center gap-2 rounded-lg bg-[#edf2fb] px-3 py-2 text-[11px] font-medium text-[#315c9f]"
@@ -4116,7 +4111,7 @@ function WarehouseView() {
                         {claim.payload}
                       </pre>
                     )}
-                    {claim.emailError && claim.emailStatus !== "sent" && (
+                    {claim.emailError && (
                       <p className="mt-3 text-[11px] text-[#a46437]">
                         {claim.emailError}
                       </p>

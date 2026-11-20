@@ -1,0 +1,13 @@
+/node_modules/
+/config/
+/data/
+/logs/
+/backups/
+/private-template-archive/
+/order-queue/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.pfx
+*.crt
+*.key

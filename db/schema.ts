@@ -168,3 +168,26 @@ export const personalDetailsDrafts = sqliteTable("personal_details_drafts", {
   iv: text("iv").notNull(),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+export const addressOrders = sqliteTable("address_orders", {
+  id: text("id").primaryKey(),
+  requestNo: text("request_no").notNull().unique(),
+  userId: text("user_id").notNull(),
+  userEmail: text("user_email").notNull(),
+  userName: text("user_name").notNull(),
+  templateId: text("template_id").notNull(),
+  templateName: text("template_name").notNull(),
+  subjectName: text("subject_name").notNull(),
+  recipientEmail: text("recipient_email").notNull(),
+  status: text("status").notNull().default("queued"),
+  statusMessage: text("status_message"),
+  externalOrderNo: text("external_order_no"),
+  externalOrderUrl: text("external_order_url"),
+  paymentAmount: text("payment_amount"),
+  paymentCurrency: text("payment_currency"),
+  paymentNetwork: text("payment_network"),
+  paymentAddress: text("payment_address"),
+  error: text("error"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});

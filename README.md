@@ -1,5 +1,11 @@
 # vinext-starter
 
+## 当前正式站部署
+
+正式站的运行代码及预构建文件位于 `selfhost/`。在新 Windows 服务器安装或迁移时，请先阅读部署说明。 [Windows 部署与迁移](selfhost/README.md)
+
+本页其余部分用于开发 Sites 基础应用。生产宿主提供的购买、续费、额度、邮箱与缓存功能在 `selfhost/` 中。
+
 A clean full-stack starter running on [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and Drizzle support.
 
 ## Prerequisites

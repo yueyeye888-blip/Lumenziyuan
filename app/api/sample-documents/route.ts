@@ -58,7 +58,7 @@ export async function GET() {
     emailConfigured: sampleEmailConfigured(),
     documentTypes: Array.from(DOCUMENT_TYPES),
     records,
-  });
+  }, { headers: { "cache-control": "private, no-store" } });
 }
 
 export async function POST(request: Request) {
@@ -85,6 +85,9 @@ export async function POST(request: Request) {
     const row = rows[0];
     if (!row)
       return Response.json({ error: "没有找到该测试文件" }, { status: 404 });
+    if (["unknown", "accepted", "sent", "delivered"].includes(row.emailStatus)) {
+      return Response.json({ error: row.emailStatus === "unknown" ? "发送结果待确认，请先核对收件箱和垃圾邮箱" : "邮件服务已接受此请求，请先核对收件箱和垃圾邮箱", emailStatus: row.emailStatus }, { status: 409 });
+    }
     const delivery = await deliver(request, row);
     await db
       .update(sampleDocumentRequests)
@@ -156,5 +159,5 @@ export async function POST(request: Request) {
     requestNo: row.requestNo,
     emailStatus: delivery.status,
     emailError: delivery.ok ? null : delivery.error,
-  });
+  }, { headers: { "cache-control": "private, no-store" } });
 }

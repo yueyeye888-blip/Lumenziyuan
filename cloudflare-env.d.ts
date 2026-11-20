@@ -12,5 +12,6 @@ declare namespace Cloudflare {
     DELIVERY_EMAIL_FROM?: string;
     OPENAI_API_KEY?: string;
     ADDRESS_TRANSLATION_MODEL?: string;
+    ADDRESS_ORDER_CALLBACK_TOKEN?: string;
   }
 }

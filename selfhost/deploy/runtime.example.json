@@ -1,0 +1,18 @@
+{
+  "port": 8443,
+  "origin": "https://resources.example.com",
+  "aliasOrigins": [],
+  "outlook": {
+    "mailbox": "",
+    "clientId": ""
+  },
+  "bindings": {
+    "RESOURCE_ADMIN_EMAILS": "admin@example.com",
+    "SETTINGS_ENCRYPTION_KEY": "",
+    "ESIM_ACCESS_CODE": "",
+    "ESIM_SECRET_KEY": "",
+    "OPENAI_API_KEY": "",
+    "ADDRESS_TRANSLATION_MODEL": "gpt-4.1-mini",
+    "ADDRESS_ORDER_CALLBACK_TOKEN": ""
+  }
+}

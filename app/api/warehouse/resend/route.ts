@@ -19,6 +19,7 @@ export async function POST(request: Request) {
   ).limit(1);
   const row = rows[0];
   if (!row || row.status !== "claimed" || !row.recipientEmail) return Response.json({ error: "没有找到可重发的认领记录" }, { status: 404 });
+  if (["unknown", "accepted", "sent", "delivered"].includes(row.emailStatus)) return Response.json({ error: "请先核对收件箱和垃圾邮箱；该记录已提交或发送结果尚未确认，暂不重复发送", emailStatus: row.emailStatus }, { status: 409 });
   const payload = await decryptSetting(row.encryptedValue, row.iv);
   const delivery = await sendWarehouseDelivery({
     recipientEmail: row.recipientEmail,
@@ -31,5 +32,5 @@ export async function POST(request: Request) {
     emailProviderId: delivery.ok ? delivery.providerId : null,
   }).where(eq(warehouseInventory.id, row.id));
   if (!delivery.ok) return Response.json({ error: delivery.error, emailStatus: delivery.status }, { status: delivery.status === "pending" ? 503 : 502 });
-  return Response.json({ ok: true, emailStatus: "sent" });
+  return Response.json({ ok: true, emailStatus: delivery.status });
 }

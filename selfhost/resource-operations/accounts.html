@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>账号管理 · Lumen</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f5f7fb;color:#243d64;font:15px system-ui}main{max-width:960px;margin:0 auto;padding:32px 20px}a{color:#315c9f}h1{font-size:29px}h2{font-size:19px;margin-top:0}section{padding:24px;margin-top:20px;background:white;border:1px solid #e1e7ef;border-radius:16px}label{display:grid;gap:6px;font-size:13px}input,button{font:inherit;border:1px solid #dbe4f0;border-radius:9px;padding:10px 12px;background:white}button{width:max-content;background:#1d3b72;color:white;cursor:pointer}button:disabled{opacity:.6}form{display:grid;gap:14px;max-width:480px}ul{list-style:none;padding:0;margin-bottom:0}li{padding:12px 0;border-top:1px solid #edf0f5;display:flex;flex-wrap:wrap;gap:6px 16px;justify-content:space-between}small{color:#65768e}#account-status{margin:0;color:#315c9f;min-height:22px}
+    .back{display:inline-flex;align-items:center;gap:10px;min-height:44px;padding:9px 14px 9px 10px;border:1px solid #dbe4f0;border-radius:12px;background:white;color:#243d64;text-decoration:none;font-size:13px;font-weight:600}.back:hover{background:#edf3fb;border-color:#a9bed9}.back:focus-visible{outline:2px solid #416db0;outline-offset:3px}.back span{display:grid;place-items:center;width:24px;height:24px;border-radius:7px;background:#eef3fa;font-size:17px;line-height:1}
+  </style>
+  <script src="/__host/resource-operations.js" defer></script>
+</head>
+<body>
+  <main>
+    <nav aria-label="工作台导航"><a class="back" href="/"><span aria-hidden="true">←</span>返回工作台</a></nav>
+    <h1>账号管理</h1>
+    <section>
+      <h2>新增员工账号</h2>
+      <form id="create-employee" autocomplete="off">
+        <label>姓名<input name="name" maxlength="80" required></label>
+        <label>公司邮箱<input name="email" type="email" maxlength="254" required autocomplete="off"></label>
+        <label>初始密码<input name="password" type="password" minlength="12" maxlength="128" required autocomplete="new-password"><small>至少 12 位。员工可使用此邮箱和密码登录。</small></label>
+        <button>创建账号</button>
+        <p id="account-status" role="status"></p>
+      </form>
+    </section>
+    <section>
+      <h2>现有账号</h2>
+      <ul id="account-list" aria-label="现有账号"><li>正在读取…</li></ul>
+    </section>
+  </main>
+</body>
+</html>
