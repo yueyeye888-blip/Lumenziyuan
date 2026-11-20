@@ -1,6 +1,7 @@
 (() => {
   const walletUrl = '/?section=wallet';
   const amount = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  const dollars = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 4 });
   let wallet, dashboard, links, snapshot;
   let showingWallet = new URL(location.href).searchParams.get('section') === 'wallet';
   let rechargeOnOpen = new URL(location.href).searchParams.get('action') === 'recharge';
@@ -45,13 +46,23 @@
     const section = document.createElement('section');
     section.id = 'lumen-wallet-summary';
     section.setAttribute('aria-labelledby', 'lumen-wallet-summary-heading');
-    section.innerHTML = '<span class="lumen-wallet-glyph" aria-hidden="true"></span><div class="lumen-wallet-summary-label"><h2 id="lumen-wallet-summary-heading">钱包 / 充值</h2><p>可用余额 <strong aria-live="polite">—</strong></p></div><div class="lumen-wallet-summary-actions"></div>';
+    section.innerHTML = '<span class="lumen-wallet-glyph" aria-hidden="true"></span><div class="lumen-wallet-summary-label"><h2 id="lumen-wallet-summary-heading">钱包 / 充值</h2><p>可用余额 <strong aria-live="polite">—</strong></p><p data-supplier-funds hidden>eSIMAccess 供应商余额 <strong>—</strong></p></div><div class="lumen-wallet-summary-actions"></div>';
     const actions = section.lastElementChild;
     actions.append(walletLink('查看账单', 'lumen-wallet-secondary'));
     const recharge = walletLink('充值 USDT', 'lumen-wallet-primary', true);
     recharge.hidden = true;
     actions.append(recharge);
     return section;
+  }
+
+  function displayBalance() {
+    if (!links || !snapshot) return;
+    links.querySelector('strong').textContent = amount.format(snapshot.availableRaw / 10000) + ' U';
+    links.querySelector('.lumen-wallet-primary').hidden = snapshot.role === 'employee' || !snapshot.networks?.length;
+    const supplier = links.querySelector('[data-supplier-funds]');
+    supplier.hidden = !snapshot.canManageAccounts;
+    supplier.querySelector('strong').textContent = Number.isSafeInteger(snapshot.esimSupplierBalanceRaw)
+      ? dollars.format(snapshot.esimSupplierBalanceRaw / 10000) : '暂不可用';
   }
 
   async function refreshBalance() {
@@ -61,11 +72,7 @@
       const response = await fetch('/api/commerce/wallet', { cache: 'no-store', signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw Error();
       snapshot = await response.json();
-      if (links) {
-        const actions = links.querySelector('.lumen-wallet-summary-actions');
-        links.querySelector('strong').textContent = amount.format(snapshot.availableRaw / 10000) + ' U';
-        actions.lastElementChild.hidden = snapshot.role === 'employee' || !snapshot.networks?.length;
-      }
+      displayBalance();
       syncNavigation();
     } catch {
       if (links && !snapshot) links.querySelector('strong').textContent = '暂不可用';
@@ -116,10 +123,7 @@
       links = walletSummary();
       const header = main.querySelector(':scope > header');
       header.after(links, dashboard);
-      if (snapshot) {
-        links.querySelector('strong').textContent = amount.format(snapshot.availableRaw / 10000) + ' U';
-        links.querySelector('.lumen-wallet-primary').hidden = snapshot.role === 'employee' || !snapshot.networks?.length;
-      }
+      displayBalance();
     }
     main.toggleAttribute('data-lumen-wallet-view', showingWallet);
     dashboard.hidden = !showingWallet;
@@ -198,7 +202,8 @@
   // Keep the wallet reachable when session lookup is delayed or performance entries are unavailable.
   window.addEventListener('load', () => setTimeout(startDashboard, 1800), { once: true });
 
-  function paymentPin() {
+  function paymentPin(priceRaw) {
+    const price = amount.format(priceRaw / 10000);
     return new Promise((resolve) => {
       const dialog = document.createElement('dialog');
       dialog.className = 'lumen-payment-dialog';
@@ -210,12 +215,12 @@
             <p>地址证明生成</p>
           </div>
           <div class="lumen-payment-body">
-            <div class="lumen-payment-total"><span>应付金额</span><strong>10 <small>U</small></strong></div>
+            <div class="lumen-payment-total"><span>应付金额</span><strong>${price} <small>U</small></strong></div>
             <p>付款后开始处理。订单失败时，费用会退回账户余额。</p>
             <label>六位支付密码<input type="password" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" required autocomplete="off"></label>
             <div class="lumen-payment-links"><a href="/?section=wallet">查看余额</a><a href="/__host/security">设置支付密码</a></div>
           </div>
-          <footer><button class="lumen-wallet-secondary" value="cancel" formnovalidate>取消</button><button class="lumen-wallet-primary" value="ok">确认支付 10 U</button></footer>
+          <footer><button class="lumen-wallet-secondary" value="cancel" formnovalidate>取消</button><button class="lumen-wallet-primary" value="ok">确认支付 ${price} U</button></footer>
         </form>`;
       document.body.append(dialog);
       dialog.onclose = () => {
@@ -228,7 +233,17 @@
     });
   }
   window.lumenSubmitAddress = async function (path, options) {
-    const pin = await paymentPin();
+    let price;
+    try {
+      const response = await fetch('/api/commerce/address/price', { cache: 'no-store' });
+      if (!response.ok) throw Error();
+      const quote = await response.json();
+      if (!Number.isSafeInteger(quote.priceRaw)) throw Error();
+      price = quote.priceRaw;
+    } catch {
+      return Response.json({ error: '暂时无法读取售价，请稍后重试。' }, { status: 503 });
+    }
+    const pin = await paymentPin(price);
     if (!pin) return Response.json({ error: '已取消提交。' }, { status: 400 });
     const fingerprint = Array.from(
       new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(options.body))),
@@ -240,7 +255,7 @@
     const res = await fetch(path, {
       ...options,
       headers: { ...options.headers, 'idempotency-key': key },
-      body: JSON.stringify({ ...JSON.parse(options.body), pin }),
+      body: JSON.stringify({ ...JSON.parse(options.body), pin, quotedPriceRaw: price }),
     });
     if (res.ok || (res.status >= 400 && res.status < 500)) sessionStorage.removeItem(name);
     return res;

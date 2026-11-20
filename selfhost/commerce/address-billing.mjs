@@ -4,8 +4,10 @@ import path from 'node:path';
 import { orderNotice } from '../site-order-queue.mjs';
 import { trustedHeaders } from '../auth.mjs';
 import { fault } from './wallet.mjs';
+import { discountedPrice } from './pricing.mjs';
 
 export const addressPriceRaw = 100000;
+export const addressPriceFor = user => discountedPrice(addressPriceRaw, user);
 const orderPath = '/api/personal-details/submit';
 const requestKey = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const reviewAfterMs = 10 * 60_000;
@@ -20,11 +22,14 @@ export function createAddressBilling({ db, mf, wallet, config, now = Date.now })
     CREATE INDEX IF NOT EXISTS address_prepayments_open ON address_prepayments(bill_id) WHERE settled=0;
     CREATE TABLE IF NOT EXISTS address_queue_intents(
       bill_id TEXT PRIMARY KEY, state TEXT NOT NULL CHECK(state IN ('prepared','ready','published','discarded','review')));`);
+  if (!db.prepare('PRAGMA table_info(address_prepayments)').all().some(column => column.name === 'amount_raw')) {
+    db.exec(`ALTER TABLE address_prepayments ADD COLUMN amount_raw INTEGER NOT NULL DEFAULT ${addressPriceRaw}`);
+  }
   const pending = new Set();
   const read = db.prepare('SELECT * FROM address_bills WHERE id=?');
   const queueIntent = db.prepare('SELECT state FROM address_queue_intents WHERE bill_id=?');
   const setQueueState = db.prepare('UPDATE address_queue_intents SET state=? WHERE bill_id=?');
-  const prepayment = db.prepare('SELECT settled FROM address_prepayments WHERE bill_id=?');
+  const prepayment = db.prepare('SELECT settled,amount_raw FROM address_prepayments WHERE bill_id=?');
   function paymentStatus(id) {
     const state = read.get(id).state;
     return state === 'released' ? 'refunded' : state === 'spent' ? 'paid' : 'reserved';
@@ -55,7 +60,7 @@ export function createAddressBilling({ db, mf, wallet, config, now = Date.now })
       if (prepaid) {
         if (prepaid.settled) return;
         if (state === 'released') {
-          wallet.credit({ userId:bill.user_id, reference:'refund:'+bill.id, amountRaw:addressPriceRaw, note:'地址生成退款 · '+bill.request_no });
+          wallet.credit({ userId:bill.user_id, reference:'refund:'+bill.id, amountRaw:prepaid.amount_raw, note:'地址生成退款 · '+bill.request_no });
         }
         db.prepare('UPDATE address_prepayments SET settled=1 WHERE bill_id=?').run(bill.id);
         db.prepare('UPDATE address_bills SET state=? WHERE id=?').run(state,bill.id);
@@ -97,7 +102,7 @@ export function createAddressBilling({ db, mf, wallet, config, now = Date.now })
         "UPDATE address_orders SET status_message=?,updated_at=? WHERE request_no=? AND user_id=? AND status='queued'"
       )
       .bind(
-        prepayment.get(bill.id) ? '已支付 10 U，提交结果待管理员核对。无需重复提交。' : '提交结果待管理员核对，余额已预留。无需重复提交。',
+        prepayment.get(bill.id) ? '已支付，提交结果待管理员核对。无需重复提交。' : '提交结果待管理员核对，余额已预留。无需重复提交。',
         new Date(now()).toISOString(),
         bill.request_no,
         bill.user_id
@@ -162,7 +167,7 @@ export function createAddressBilling({ db, mf, wallet, config, now = Date.now })
     }
     if (firstError) throw firstError;
   }
-  async function submit(user, key, payload) {
+  async function submit(user, key, payload, quotedPriceRaw) {
     if (!requestKey.test(key || '')) throw fault(400, '请刷新页面后重新发起本次订单。');
     const id = 'address:' + key,
       digest = createHash('sha256').update(payload).digest('hex');
@@ -172,7 +177,11 @@ export function createAddressBilling({ db, mf, wallet, config, now = Date.now })
       const order = await settle(prior);
       if (!order && read.get(id).state === 'released') throw fault(409, '上次请求未成立，金额已退回可用余额，请重新提交。');
       if (!order) throw fault(503, '正在核对上次提交，请稍后再查询。');
-      return { status: 202, data: { ok: true, requestNo: prior.request_no, paymentStatus:paymentStatus(id) } };
+      return { status: 202, data: { ok: true, requestNo: prior.request_no, paymentStatus:paymentStatus(id), paidAmountRaw:prepayment.get(id)?.amount_raw ?? addressPriceRaw } };
+    }
+    const priceRaw = addressPriceFor(user);
+    if ((quotedPriceRaw !== undefined || user.discountBps !== null && user.discountBps !== undefined) && quotedPriceRaw !== priceRaw) {
+      throw fault(409, '售价已更新，请刷新页面查看金额后再确认付款。');
     }
     const requestNo =
       'ADDR-' +
@@ -180,9 +189,9 @@ export function createAddressBilling({ db, mf, wallet, config, now = Date.now })
       '-' +
       randomUUID().slice(0, 8).toUpperCase();
     wallet.atomic(() => {
-      wallet.reserve(user.id, id, addressPriceRaw);
+      wallet.reserve(user.id, id, priceRaw);
       wallet.capture(user.id,id,'地址生成 · '+requestNo);
-      db.prepare('INSERT INTO address_prepayments(bill_id) VALUES(?)').run(id);
+      db.prepare('INSERT INTO address_prepayments(bill_id,amount_raw) VALUES(?,?)').run(id,priceRaw);
       db.prepare("INSERT INTO address_bills VALUES(?,?,?,?,?,'spent')").run(id, requestNo, user.id, digest, now());
       if (directory) db.prepare("INSERT INTO address_queue_intents VALUES(?,'prepared')").run(id);
     });
@@ -225,7 +234,7 @@ export function createAddressBilling({ db, mf, wallet, config, now = Date.now })
       if (reply.status !== 202 || result.requestNo !== requestNo) throw fault(503, '正在核对订单，请稍后查看记录。');
       if (directory) setQueueState.run('ready', id);
       await settle(bill);
-      return { status: 202, data: { ...result,paymentStatus:paymentStatus(id) } };
+      return { status: 202, data: { ...result,paymentStatus:paymentStatus(id), paidAmountRaw:prepayment.get(id)?.amount_raw ?? addressPriceRaw } };
     } finally {
       pending.delete(id);
     }

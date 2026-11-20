@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { downloadPriceFor } from './commerce/archive-downloads.mjs';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { readFile, writeFile, rename, unlink, stat, mkdir, open } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
@@ -70,7 +71,7 @@ export async function handlePrivateTemplateArchive(req, res, { root, url, user, 
   }
   if (suffix === '/catalog' && req.method === 'GET') {
     const data = await catalog(root);
-    json(res, 200, { source: data.source, items: data.items.map(({ localPath, downloadUrl, ...item }) => item) }); return true;
+    json(res, 200, { source: data.source, priceRaw: downloadPriceFor(user), items: data.items.map(({ localPath, downloadUrl, ...item }) => item) }); return true;
   }
   const previewMatch = suffix.match(/^\/previews\/(windx-\d+)$/);
   if (previewMatch && ['GET','HEAD'].includes(req.method)) {
@@ -139,7 +140,11 @@ export async function handlePrivateTemplateArchive(req, res, { root, url, user, 
       let fields;
       try { fields=JSON.parse(await readBody(req,2048)); } catch { json(res,400,{error:'下载请求无效。'}); return true; }
       await purchases.verifyPin(user,fields?.pin);
-      const token = archiveDownloads.authorize(user.id,item,fields?.requestId);
+      const priceRaw = downloadPriceFor(user);
+      if ((fields?.quotedPriceRaw !== undefined || user.discountBps != null) && fields?.quotedPriceRaw !== priceRaw) {
+        json(res,409,{error:'售价已更新，请刷新模板库，确认金额后再下载。'}); return true;
+      }
+      const token = archiveDownloads.authorize(user.id,item,fields?.requestId,priceRaw);
       json(res,200,{downloadPath:BASE+'/files/'+id+'?receipt='+token}); return true;
     }
     archiveDownloads.check(user.id,item,receipt);

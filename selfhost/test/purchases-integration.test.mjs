@@ -63,7 +63,7 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     throw Error('Unexpected supplier request');
   });
   const customer = {...stranger,id:'public',email:'customer@test.example',role:'customer'};
-  const funds = testWallet({staff:200_000,admin:200_000});
+  const funds = testWallet({staff:200_000});
   const api = createEsimPurchases({wallet:funds,
     config:{origin,bindings},mf,identities:{list:() => [admin,staff,stranger]},supplier,
     readBody:async req => {
@@ -125,7 +125,9 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     assert.equal((await request(orderPath,stranger)).data.orders.length,0);
     assert.equal((await request(orderPath+'?id='+first.id,admin)).data.order.status,'allocating');
     assert.equal((await api.summary(staff)).availableRaw,125_930);
-    assert.equal((await api.summary(admin)).availableRaw,200_000);
+    assert.deepEqual(await api.supplierBalance(admin),{balanceRaw:wallet,availableRaw:wallet});
+    assert.equal(await api.supplierBalance(customer),null);
+    assert.equal((await api.summary(admin)).availableRaw,wallet);
     profileReady=true;
     const originalNow = Date.now;
     try {
@@ -141,10 +143,17 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     assert.equal(funds.count('spent'),1);
     assert.ok(owned.every(row=>row.owner_user_id===staff.id && row.group_id==='test'));
     const today = (await request(quotePath,admin,{ids:['SG_Daily','FR_1']})).data;
+    assert.equal(today.paymentSource,'supplier');
+    assert.equal(today.supplierBalanceRaw,wallet);
     assert.equal(today.lines[0].periodNum,1);
-    const combined = cart(undefined,[{id:'SG_Daily',priceRaw:33_548,count:2},{id:'FR_1',priceRaw:26_000,count:1}]);
+    assert.equal(today.lines[0].priceRaw,16_774);
+    const combined = cart(undefined,[{id:'SG_Daily',priceRaw:16_774,count:2},{id:'FR_1',priceRaw:13_000,count:1}]);
     const second=await request(orderPath,admin,combined);
     assert.equal(second.status,202);
+    assert.equal(second.data.order.amountRaw,46_548);
+    assert.equal(funds.balance(admin.id),0);
+    const directPayment=await db.prepare('SELECT product_cost,retail_amount,settled FROM esim_commerce_payments WHERE payment_id=?').bind(combined.id).first();
+    assert.deepEqual(directPayment,{product_cost:46_548,retail_amount:0,settled:1});
     assert.deepEqual(submitted.at(-1).packageInfoList,[{packageCode:'SG_Daily',count:2,price:16774,periodNum:1},{packageCode:'FR_1',count:1,price:13000}]);
     failNextOrder='200007';
     const rejection=await request(orderPath,staff,cart());
@@ -174,7 +183,7 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     assert.equal((await request(orderPath,staff,retryFields)).data.order.orderNo,'ORDER5');
     assert.equal(submitted.length,5);
     assert.equal(funds.count('held'),0);
-    assert.equal(funds.count('spent'),3);
+    assert.equal(funds.count('spent'),2);
     // A live transaction interrupted before this release retains the original supplier
     // amount. Its legacy debit becomes part of the eventual quota migration.
     const legacyId='LH-'+randomUUID(), oldTime=new Date(Date.now()-40_000).toISOString();
@@ -213,7 +222,25 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     assert.equal(funds.balance(customer.id),beforeRestart-1000);
     assert.equal((await db.prepare('SELECT status FROM esim_purchase_orders WHERE id=?').bind(interrupted).first()).status,'rejected');
 
+    // Changing an account's percentage affects new quotes and pays the same vendor cost.
+    customer.discountBps=8000;
+    wallet=40_000;
+    const agentQuote=(await request(quotePath,customer,{ids:['FR_1']})).data;
+    assert.equal(agentQuote.paymentSource,'wallet');
+    assert.equal(agentQuote.supplierBalanceRaw,undefined);
+    assert.equal(agentQuote.lines[0].priceRaw,20_800);
+    assert.equal((await request(orderPath,customer,cart(undefined,[{id:'FR_1',priceRaw:26_000,count:1}]))).status,409);
+    const agentOrder=await request(orderPath,customer,cart(undefined,[{id:'FR_1',priceRaw:20_800,count:1}]));
+    assert.equal(agentOrder.status,202);
+    assert.equal(funds.balance(customer.id),beforeRestart-1000-20_800);
+    assert.equal(submitted.at(-1).amount,13_000);
 
+    wallet=cost-1;
+    const count=submitted.length;
+    const insufficient=await request(orderPath,admin,cart(undefined,[{id:'SG_Fixed',priceRaw:cost,count:1}]));
+    assert.equal(insufficient.status,409);
+    assert.match(insufficient.data.error,/供应商账户可用余额不足/);
+    assert.equal(submitted.length,count);
   } finally {
     server.close();
     await mf.dispose(); funds.close();

@@ -14,6 +14,7 @@ const button = (text, action) => {
 };
 const money = (raw) =>
   Number(raw / 10000).toLocaleString('en-US', { maximumFractionDigits: 4, useGrouping: false }) + ' U';
+const dollars = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 4 });
 const statusText = {
   pending: '等待支付',
   confirming: '链上确认中',
@@ -208,25 +209,29 @@ function selectHistory(key) {
   }
 }
 for (const tab of ['entries', 'deposits']) $('show-' + tab).onclick = () => selectHistory(tab);
+const depositForm = $('deposit-form');
+const rechargeOptions = [...depositForm.querySelectorAll('[data-amount]')];
+const customRechargeAmount = depositForm.elements.customAmount;
+let selectedRechargeAmount = '50';
+for (const option of rechargeOptions) {
+  option.onclick = () => {
+    selectedRechargeAmount = option.dataset.amount;
+    for (const button of rechargeOptions) {
+      button.setAttribute('aria-pressed', String(button === option));
+    }
+    const custom = selectedRechargeAmount === 'more';
+    $('custom-recharge-amount').hidden = !custom;
+    customRechargeAmount.disabled = !custom;
+    if (custom) customRechargeAmount.focus();
+  };
+}
 function openRecharge() {
   if (!wallet || $('recharge').hidden || document.querySelector('dialog[open]')) return;
   $('deposit-dialog').querySelector('.modal-feedback').hidden = true;
-  showModal($('deposit-dialog'), $('deposit-form').elements.amount);
+  showModal($('deposit-dialog'), depositForm.querySelector('[aria-pressed=true]'));
 }
 $('recharge').onclick = openRecharge;
 document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => $(b.dataset.close).close()));
-document.querySelectorAll('[data-amount]').forEach(
-  (b) =>
-    (b.onclick = () => {
-      $('deposit-form').elements.amount.value = b.dataset.amount;
-      $('deposit-form').elements.amount.dispatchEvent(new Event('input'));
-    }),
-);
-$('deposit-form').elements.amount.oninput = () => {
-  for (const b of document.querySelectorAll('[data-amount]'))
-    b.setAttribute('aria-pressed', String(b.dataset.amount === $('deposit-form').elements.amount.value));
-};
-$('deposit-form').elements.amount.oninput();
 async function loadWallet() {
   wallet = await api('/api/commerce/wallet');
   $('account').textContent = wallet.email;
@@ -235,6 +240,13 @@ async function loadWallet() {
   $('review-link').hidden = wallet.role !== 'admin';
   const rechargeAllowed = wallet.role !== 'employee';
   $('shop-balance').textContent = money(wallet.availableRaw);
+  $('address-price-value').textContent = money(wallet.priceAddressRaw).replace(' U', '');
+  $('address-pay').textContent = '支付 ' + money(wallet.priceAddressRaw) + ' 并生成';
+  $('address-pay').disabled = false;
+  $('supplier-funds').hidden = !wallet.canManageAccounts;
+  $('supplier-balance').textContent = Number.isSafeInteger(wallet.esimSupplierBalanceRaw)
+    ? dollars.format(wallet.esimSupplierBalanceRaw / 10000)
+    : '暂不可用';
   $('shop-recharge').hidden = !rechargeAllowed;
   if (view !== 'wallet') return;
   $('balance').textContent = money(wallet.availableRaw).replace(' U', '');
@@ -363,9 +375,10 @@ async function openInvoice(id, show = false) {
   }
   if (old && old !== order.status) await Promise.all([loadWallet(), loadDeposits()]);
 }
-form('deposit-form', async (f) => {
-  const key = 'deposit:' + f.network + ':' + f.amount;
-  const { order } = await api('/api/commerce/deposits', { ...f, requestId: keyFor(key) });
+form('deposit-form', async ({ network, customAmount }) => {
+  const amount = selectedRechargeAmount === 'more' ? customAmount : selectedRechargeAmount;
+  const key = 'deposit:' + network + ':' + String(Number(amount));
+  const { order } = await api('/api/commerce/deposits', { network, amount, requestId: keyFor(key) });
   clearKey(key);
   displayInvoice(order);
   $('deposit-dialog').close();
@@ -401,7 +414,7 @@ async function admin() {
             ],
           }),
           inputField('入账账号邮箱', 'email', { type: 'email' }),
-          inputField('入账整数 U', 'principal', { type: 'number', min: '1', step: '1' }),
+          inputField('入账金额（U）', 'principal', { type: 'number', min: '0.01', step: '0.01' }),
           inputField('关联充值单编号（如有）', 'orderId', {}),
           inputField('核对备注', 'note', { required: true, maxLength: 180 }),
         ]);
@@ -475,6 +488,11 @@ async function needsPin(quote) {
   if (next) location.assign('/__host/security');
   return true;
 }
+function esimFunding(quote) {
+  return quote.paymentSource === 'supplier'
+    ? '按 eSIMAccess 原价结算 · 供应商可用余额 '+dollars.format(quote.availableRaw/10000)
+    : '钱包可用余额 ' + money(quote.availableRaw);
+}
 async function buy(p) {
   const q = await api('/api/esim/purchase-quote', { ids: [p.id] });
   if (q.pending) throw Error('你有一笔订单正在核对，请查看我的订单。');
@@ -492,7 +510,8 @@ async function buy(p) {
     total.textContent = '订单合计 ' + money(Number(count.firstElementChild.value) * line.priceRaw);
   };
   const f = await ask(line.name, [
-    elem('p', '每张 ' + money(line.priceRaw) + ' · 可用 ' + money(q.availableRaw)),
+    elem('p', '每张 ' + money(line.priceRaw)),
+    elem('p', esimFunding(q)),
     count,
     total,
     pinField(),
@@ -547,11 +566,11 @@ async function renew(c) {
   const card = q.cards?.[0];
   if (!card?.options?.length) throw Error(card?.reason || '当前没有可续费方案。');
   const opts = card.options.map((x) => [x.code, x.name + ' · ' + money(x.priceRaw)]);
-  const f = await ask('续费 · ' + c.name, [inputField('续费套餐', 'code', { options: opts }), pinField()]);
+  const f = await ask('续费 · ' + c.name, [elem('p', esimFunding(q)), inputField('续费套餐', 'code', { options: opts }), pinField()]);
   if (!f) return;
   await api('/api/esim/renewals', { id: q.id, ...f });
   message('续费已提交，结果可在我的订单中查看。');
-  await loadOrders();
+  await Promise.all([loadOrders(), loadWallet()]);
 }
 async function loadOrders() {
   const [esim, addr, ren] = await Promise.all([
@@ -624,21 +643,23 @@ form('address-form', async (f, el) => {
   try {
     r = await api(
       '/api/personal-details/submit',
-      { profile, template: { id: t.id, name: t.name }, pin: f.pin },
+      { profile, template: { id: t.id, name: t.name }, pin: f.pin, quotedPriceRaw: wallet.priceAddressRaw },
       { 'idempotency-key': keyFor(k) },
     );
   } catch (e) {
     if (e.status >= 400 && e.status < 500) clearKey(k);
+    if (e.status === 409) await loadWallet().catch(() => {});
     throw e;
   }
   clearKey(k);
   el.reset();
+  const paid = money(r.paidAmountRaw);
   const receipt =
     r.paymentStatus === 'refunded'
-      ? '订单未完成，10 U 已退回余额。'
+      ? '订单未完成，' + paid + ' 已退回余额。'
       : r.paymentStatus === 'reserved'
-        ? '原订单已预留 10 U。'
-        : '已支付 10 U。';
+        ? '原订单已预留 ' + paid + '。'
+        : '已支付 ' + paid + '。';
   message(receipt + '订单号 ' + r.requestNo);
   await Promise.all([loadOrders(), loadWallet()]);
 });

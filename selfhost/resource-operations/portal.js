@@ -19,12 +19,17 @@
     const empty = select('empty-accounts');
     const toolbar = select('new-employee');
     const credit = select('credit-form');
+    const discount = select('discount-form');
+    const discountMode = discount.elements.mode;
+    const discountPercent = discount.elements.percent;
+    const percentLabel = (value) => units.format(value / 100) + '%';
+    const hasDiscount = (account) => Number.isInteger(account.discountBps);
     const summary = new Intl.NumberFormat('en-US');
     const units = new Intl.NumberFormat('en-US', {maximumFractionDigits: 4});
     const amount = (raw) => units.format(raw / 10000);
     const money = (raw) => amount(raw) + ' U';
     const roles = {admin: '管理员', employee: '员工', customer: '平台用户'};
-    let accounts, role = 'employee', target;
+    let accounts, role = 'employee', target, discountTarget;
 
     function notice(message, failure = false) {
       status.textContent = message;
@@ -35,7 +40,7 @@
     function show(dialog) {
       dialog.querySelector('.modal-feedback').hidden = true;
       dialog.showModal();
-      dialog.querySelector('input').focus();
+      dialog.querySelector('input, select').focus();
     }
 
     function openCredit(account) {
@@ -47,10 +52,27 @@
       show(select('credit-dialog'));
     }
 
+    function syncDiscountFields() {
+      const isAgent = discountMode.value === 'agent';
+      select('discount-fields').hidden = !isAgent;
+      discountPercent.disabled = !isAgent;
+      discountPercent.required = isAgent;
+    }
+
+    function openDiscount(account) {
+      discountTarget = account;
+      discount.reset();
+      discountMode.value = hasDiscount(account) ? 'agent' : 'standard';
+      discountPercent.value = hasDiscount(account) ? account.discountBps / 100 : '80';
+      select('discount-account').replaceChildren(element('strong', account.name || account.email), element('small', account.email));
+      syncDiscountFields();
+      show(select('discount-dialog'));
+    }
+
     function render() {
       if (!accounts) return;
       const query = search.value.trim().toLowerCase();
-      const matches = accounts.filter(account => (role === 'all' || account.role === role) &&
+      const matches = accounts.filter(account => (role === 'all' || (role === 'agent' ? hasDiscount(account) : account.role === role)) &&
         (account.email + ' ' + account.name).toLowerCase().includes(query));
       list.replaceChildren();
       for (const account of matches) {
@@ -69,7 +91,14 @@
 
         const badge = element('span', roles[account.role]);
         badge.className = 'role role-' + account.role;
-        row.insertCell().append(badge);
+        const identityRoles = row.insertCell();
+        identityRoles.className = 'account-roles';
+        identityRoles.append(badge);
+        if (hasDiscount(account)) {
+          const agentBadge = element('span', '代理 · ' + percentLabel(account.discountBps));
+          agentBadge.className = 'role role-agent';
+          identityRoles.append(agentBadge);
+        }
 
         const balance = row.insertCell();
         const currency = element('span', 'U');
@@ -86,6 +115,14 @@
           button.setAttribute('aria-label', '增加额度 · ' + account.email);
           button.onclick = () => openCredit(account);
           action.append(button);
+          if (account.role !== 'admin') {
+            const agentAction = element('button', hasDiscount(account) ? '修改折扣' : '设置代理');
+            agentAction.type = 'button';
+            agentAction.className = 'button neutral';
+            agentAction.setAttribute('aria-label', agentAction.textContent + ' · ' + account.email);
+            agentAction.onclick = () => openDiscount(account);
+            action.append(agentAction);
+          }
         } else {
           const stopped = element('span', '已停用');
           stopped.className = 'unavailable';
@@ -98,6 +135,7 @@
         all: '暂无账号。',
         employee: '暂无员工。点击「创建员工」添加第一个账号。',
         customer: '暂无通过邮箱注册的平台用户。',
+        agent: '暂无代理。在员工或平台用户的账号旁点击「设置代理」。',
       }[role];
     }
 
@@ -105,6 +143,7 @@
       accounts = (await requestJson('/api/operations/accounts')).accounts;
       const employees = accounts.filter(account => account.role === 'employee');
       select('employee-count').textContent = summary.format(employees.length);
+      select('agent-count').textContent = summary.format(accounts.filter(hasDiscount).length);
       select('customer-count').textContent = summary.format(accounts.filter(account => account.role === 'customer').length);
       select('employee-balance').textContent = amount(employees.reduce((total, account) => total + account.availableRaw, 0));
       render();
@@ -120,6 +159,7 @@
 
     for (const button of document.querySelectorAll('[data-role]')) button.onclick = () => selectTab(button.dataset.role);
     search.oninput = render;
+    discountMode.onchange = syncDiscountFields;
     toolbar.onclick = () => show(select('employee-dialog'));
     document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => select(button.dataset.close).close());
 
@@ -181,6 +221,14 @@
       return data.email + ' 的可用余额已更新为 ' + money(data.availableRaw) + '。';
     });
 
+    onSubmit(discount, '正在保存…', async fields => {
+      const discountBps = fields.mode === 'agent' ? Math.round(Number(fields.percent) * 100) : null;
+      const saved = await post('/api/operations/accounts/discount', { email: discountTarget.email, discountBps });
+      return saved.discountBps === null
+        ? saved.email + ' 已恢复普通定价。'
+        : saved.email + ' 已设置为代理，按零售价的 ' + percentLabel(saved.discountBps) + ' 支付。';
+    });
+
     refresh().then(() => {
       const email = new URL(location.href).searchParams.get('credit');
       const account = email && accounts.find(entry => entry.enabled && entry.email.toLowerCase() === email.toLowerCase());
@@ -236,7 +284,7 @@
     label.style.cssText = 'display:block;margin-top:18px;font-size:13px;font-weight:600';
     const recipient = document.createElement('input');
     recipient.type = 'email'; recipient.required = true; recipient.maxLength = 254; recipient.autocomplete = 'email';
-    recipient.placeholder = 'name@example.com';
+    recipient.placeholder = '请输入收件邮箱';
     recipient.style.cssText = 'display:block;width:100%;min-height:42px;margin-top:7px;padding:9px 12px;border:1px solid #cbd9eb;border-radius:9px;background:white;color:#243d64;font-size:14px';
     label.append(recipient);
     const feedback = element('p','');

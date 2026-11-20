@@ -32,7 +32,7 @@ const wallet = createWallet(commerceDb);
 const archiveDownloads = createArchiveDownloads({ db:commerceDb, wallet });
 const deposits = createDeposits({db:commerceDb,config:loadUsdtConfig(root,config),credit:wallet.credit});
 const purchases = createEsimPurchases({ config, mf, identities, wallet, readBody: body });
-const catalog = createEsimCatalog(config.bindings || {});
+const catalog = createEsimCatalog(config.bindings || {}, { usesSupplier: purchases.usesSupplier });
 void catalog.warm();
 const commerceD1 = await purchases.ready();
 await migrateQuotas(commerceD1,wallet);
@@ -72,7 +72,7 @@ const server = https.createServer(tls, async (req, res) => {
     const url = new URL(req.url, origin);
     const allowedOrigins = new Set([origin, ...(config.aliasOrigins || [])]);
     if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin && !allowedOrigins.has(req.headers.origin)) return json(res, 403, { error: '请求来源不匹配' });
-    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '1.2.0' });
+    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '1.3.0' });
     // Machine callbacks use the existing order secret, never a browser session.
     if (url.pathname === '/api/address-orders/callback') {
       if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
@@ -184,6 +184,6 @@ const server = https.createServer(tls, async (req, res) => {
     console.error(JSON.stringify({ event: 'request_failed', path: req.url?.split('?')[0], time: new Date().toISOString() }));
   }
 });
-server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '1.2.0', port: config.port || 8443 })));
+server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '1.3.0', port: config.port || 8443 })));
 const cleanup = setInterval(() => { identities.cleanup(); for (const [key, value] of attempts) if (value.until < Date.now()) attempts.delete(key); }, 60_000);
 for (const event of ['SIGTERM', 'SIGINT']) process.on(event, () => { clearInterval(cleanup); clearInterval(commerceTimer); deposits.stop(); operations.close(); server.close(async () => { await mf.dispose(); process.exit(0); }); });

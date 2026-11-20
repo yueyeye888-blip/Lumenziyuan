@@ -2,6 +2,7 @@ import { createHash, webcrypto } from 'node:crypto';
 import { trustedHeaders } from '../auth.mjs';
 import { fault } from './wallet.mjs';
 import { createWarehousePrices } from './warehouse-prices.mjs';
+import { canManageAccounts } from '../resource-operations/account-access.mjs';
 
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const emailValid = email => typeof email==='string' && email.length<=254 && /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(email);
@@ -47,7 +48,7 @@ export function createWarehouse({wallet,db,mf,config,outlook,verifyPin,fetchImpl
     const d1=await inventory();
     const row=await d1.prepare("SELECT unit_price,currency FROM warehouse_inventory WHERE batch_id=? AND status='available' LIMIT 1").bind(fields.batchId).first();
     if (!row) throw fault(409,'该批次库存已被认领，请刷新库存。');
-    const {retailUnitRaw}=await price(row.unit_price,row.currency);
+    const {retailUnitRaw}=await price(row.unit_price,row.currency,user,canManageAccounts(config,user));
     const total=retailUnitRaw*fields.quantity;
     if (retailUnitRaw!==fields.quotedUnitRaw || !Number.isSafeInteger(total)) throw fault(409,'售价已变更，请刷新库存并核对总额。');
     if (total>0) {
@@ -150,7 +151,7 @@ export function createWarehouse({wallet,db,mf,config,outlook,verifyPin,fetchImpl
         const data=await result.json();
         if (!result.ok) return send(res,result.status,data);
         data.batches=await Promise.all(data.batches.map(async item=>{
-          try{return {...item,...await price(item.unitPrice,item.currency)};}
+          try{return {...item,...await price(item.unitPrice,item.currency,user,canManageAccounts(config,user))};}
           catch {return {...item,retailUnitRaw:null,priceLabel:'暂不可认领',rateNote:'无法确认此批次售价'};}
         }));
         return send(res,200,data);

@@ -1,6 +1,6 @@
 import { createEsimSupplier } from './esim-supplier.mjs';
 
-import { retailPrice } from './esim-commerce.mjs';
+import { esimPrice } from '../commerce/pricing.mjs';
 
 const gibibyte = 1024 ** 3;
 const freshFor = 60_000;
@@ -26,7 +26,7 @@ function publicItem(plan) {
   }
   return {
     id:plan.slug || plan.packageCode, packageCode:plan.packageCode, slug:plan.slug,
-    name:plan.name, description:plan.description, priceRaw:retailPrice(plan.price), price:retailPrice(plan.price) / 10_000,
+    name:plan.name, description:plan.description,
     currency:plan.currencyCode, volume:plan.volume, duration:plan.duration, durationUnit:plan.durationUnit,
     location:plan.location, speed:plan.speed || null, favoriteOnSupplier:Boolean(plan.favorite),
     countryName:plan.locationNetworkList?.[0]?.locationName || plan.location,
@@ -49,7 +49,7 @@ function snapshot(plans, timestamp) {
   return { entries, byId, timestamp };
 }
 
-export function createEsimCatalog(bindings, { supplier = createEsimSupplier(bindings), now = Date.now } = {}) {
+export function createEsimCatalog(bindings, { supplier = createEsimSupplier(bindings), now = Date.now, usesSupplier = () => false } = {}) {
   let current;
   let pending;
   let retryAt = 0;
@@ -79,7 +79,9 @@ export function createEsimCatalog(bindings, { supplier = createEsimSupplier(bind
     return { data: await refresh(), stale: false, cache: 'refreshed' };
   }
 
-  async function response(params) {
+  async function response(params,user) {
+    const direct = usesSupplier(user);
+    const priceFor = plan => esimPrice(plan.price,user,direct);
     const limit = Math.min(100, Math.max(1, Math.floor(Number(params.get('limit')) || 100)));
     const offset = Math.max(0, Math.floor(Number(params.get('offset')) || 0));
     const ids = (params.get('ids') || '').split(',').map(id => id.trim()).filter(Boolean).slice(0,500);
@@ -100,15 +102,20 @@ export function createEsimCatalog(bindings, { supplier = createEsimSupplier(bind
       : data.entries;
     const filtered = candidates.filter(entry => {
       const plan = entry.plan;
-      if (plan.currencyCode !== 'USD' || !Number.isSafeInteger(plan.price) || plan.price < 0 || !Number.isSafeInteger(plan.price*2)) return false;
+      const priceRaw = priceFor(plan);
+      if (plan.currencyCode !== 'USD' || priceRaw === null) return false;
       if (minVolume && plan.volume < minVolume) return false;
-      if (maxPrice && retailPrice(plan.price) / 10_000 > maxPrice) return false;
+      if (maxPrice && priceRaw / 10_000 > maxPrice) return false;
       if (maxDuration && plan.duration > maxDuration) return false;
       return !query || (entry.search ??= searchText(plan)).includes(query);
     });
     return { cache, body:{
       connected:true, total:filtered.length, limit, offset, hasMore:offset+limit<filtered.length,
-      items:filtered.slice(offset,offset+limit).map(entry => entry.item ??= publicItem(entry.plan)),
+      items:filtered.slice(offset,offset+limit).map(entry => {
+        // Cache only supplier details; each account gets a fresh display price.
+        const priceRaw = priceFor(entry.plan);
+        return { ...(entry.item ??= publicItem(entry.plan)), priceRaw, price:priceRaw / 10_000 };
+      }),
       syncedAt:new Date(data.timestamp).toISOString(), stale,
     } };
   }
@@ -117,7 +124,7 @@ export function createEsimCatalog(bindings, { supplier = createEsimSupplier(bind
     if (req.method !== 'GET' || url.pathname !== '/api/esim/packages') return false;
     const headers = { 'content-type':'application/json; charset=utf-8', 'cache-control':'private, no-store' };
     try {
-      const result = await response(url.searchParams);
+      const result = await response(url.searchParams,user);
       res.writeHead(200, { ...headers, 'x-lumen-catalog-cache':result.cache });
       const body = user?.role === 'customer' ? {...result.body,
         items:result.body.items.map(({favoriteOnSupplier,...plan})=>plan),

@@ -90,9 +90,9 @@ test('manual top-up honors ownership, live base match, PIN, quota and the suppli
     assert.equal(calls.length,0);
     const start=await Promise.all([request(renewPath,staff,{id:quote.id,pin:'654321'}),request(renewPath,staff,{id:quote.id,pin:'654321'})]);
     assert.ok(start.every(reply=>reply.status===202 && reply.data.records.length===2));
-    async function settled(id) {
+    async function settled(id,user=staff) {
       for(let n=0;n<60;n++) {
-        const {data:{records}}=await request(renewPath+'?id='+id,staff);
+        const {data:{records}}=await request(renewPath+'?id='+id,user);
         if(records.every(row=>!['queued','submitting'].includes(row.status))) return records;
         await delay(30);
       }
@@ -125,5 +125,28 @@ test('manual top-up honors ownership, live base match, PIN, quota and the suppli
     assert.equal(ledger.length,0);
     assert.equal(funds.count('spent'),2);
     assert.equal(funds.count('held'),1);
+
+    fail=null;
+    const directQuote=(await request(quotePath,admin,{ids:['CARD_B']})).data;
+    assert.equal(directQuote.paymentSource,'supplier');
+    assert.equal(directQuote.supplierBalanceRaw,wallet);
+    assert.equal(directQuote.cards[0].options[0].priceRaw,22_000);
+    assert.equal((await request('/api/settings/security',admin,{newPin:'654321'})).status,200);
+    assert.equal((await request(renewPath,admin,{id:directQuote.id,pin:'654321',code:'TOPUP_BB01'})).status,202);
+    const [directRenewal]=await settled(directQuote.id,admin);
+    assert.equal(directRenewal.status,'succeeded');
+    assert.equal(directRenewal.amountRaw,22_000);
+    assert.equal(calls.at(-1).amount,22_000);
+    assert.equal(funds.balance(admin.id),0);
+    assert.equal(funds.count('spent'),2);
+    assert.equal((await api.supplierBalance(admin)).balanceRaw,wallet);
+
+    staff.discountBps=8000;
+    const agentQuote=(await request(quotePath,staff,{ids:['CARD_B']})).data;
+    assert.equal(agentQuote.paymentSource,'wallet');
+    assert.equal(agentQuote.cards[0].options[0].priceRaw,35_200);
+    staff.discountBps=7000;
+    assert.equal((await request(renewPath,staff,{id:agentQuote.id,pin:'654321',code:'TOPUP_BB01'})).status,409);
+    assert.equal(calls.length,5);
   } finally { await mf.dispose(); funds.close(); }
 });

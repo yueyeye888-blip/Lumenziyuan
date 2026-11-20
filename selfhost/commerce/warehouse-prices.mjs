@@ -1,4 +1,5 @@
 import { fault } from './wallet.mjs';
+import { discountedPrice } from './pricing.mjs';
 
 const feed = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml';
 const scale = 100_000_000n;
@@ -29,10 +30,10 @@ export function createWarehousePrices({ now = Date.now, fetchImpl = fetch } = {}
     if (!cache || now()-cache.time >= 7*day) throw fault(503,'暂时无法取得外币参考汇率，请稍后刷新。');
     return cache;
   }
-  return async function price(cents,currency) {
+  return async function price(cents,currency,user,atCost = false) {
     if (cents===null || cents===0) return {retailUnitRaw:0,priceLabel:'免费',rateNote:'免费认领'};
     if (!Number.isSafeInteger(cents) || cents<0 || !['USD','EUR','SGD','CNY'].includes(currency)) throw fault(409,'此批次的计价币种或入库价格无效。');
-    let raw=BigInt(cents)*200n;
+    let raw=BigInt(cents)*(atCost ? 100n : 200n);
     let rateNote='账户余额支付';
     if (currency!=='USD') {
       const rate=await rates(), denominator=rate.values[currency];
@@ -41,6 +42,9 @@ export function createWarehousePrices({ now = Date.now, fetchImpl = fetch } = {}
       rateNote=`按 ECB ${rate.date} 参考汇率换算`;
     }
     if (raw<=0n || raw>BigInt(Number.MAX_SAFE_INTEGER)) throw fault(409,'价格超出支持范围。');
-    return {retailUnitRaw:Number(raw),priceLabel:(Number(raw)/10000)+' U',rateNote};
+    let retailUnitRaw;
+    try { retailUnitRaw = discountedPrice(Number(raw),user); }
+    catch { throw fault(409,'价格超出支持范围。'); }
+    return {retailUnitRaw,priceLabel:(retailUnitRaw/10000)+' U',rateNote};
   };
 }

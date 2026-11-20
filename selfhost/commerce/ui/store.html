@@ -51,6 +51,10 @@
             <a class="wallet-settings" href="/__host/security">管理支付密码 <span aria-hidden="true">↗</span></a>
           </div>
         </section>
+        <section id="supplier-funds" class="supplier-funds" hidden>
+          <div><h2>eSIMAccess 供应商余额</h2><p>超级管理员购买或续费 eSIM 时，按供应商原价从此账户扣款。</p></div>
+          <strong id="supplier-balance">—</strong>
+        </section>
         <section class="history">
           <div class="bill-heading">
             <h2>账单</h2>
@@ -72,20 +76,18 @@
             <button type="button" data-close="deposit-dialog" aria-label="关闭">×</button>
           </div>
           <form id="deposit-form">
-            <label
-              >入账金额（U）<input
-                name="amount"
-                type="number"
-                inputmode="numeric"
-                step="1"
-                min="5"
-                value="50"
-                required
-            /></label>
-            <div class="presets" aria-label="常用充值金额">
-              <button type="button" data-amount="5">5 U</button><button type="button" data-amount="20">20 U</button
-              ><button type="button" data-amount="50">50 U</button
-              ><button type="button" data-amount="100">100 U</button>
+            <div class="amount-picker">
+              <span id="recharge-amount-label">选择入账金额（U）</span>
+              <div class="presets" role="group" aria-labelledby="recharge-amount-label">
+                <button type="button" data-amount="5" aria-pressed="false">5 U</button>
+                <button type="button" data-amount="20" aria-pressed="false">20 U</button>
+                <button type="button" data-amount="50" aria-pressed="true">50 U</button>
+                <button type="button" data-amount="100" aria-pressed="false">100 U</button>
+                <button type="button" data-amount="more" aria-pressed="false" aria-controls="custom-recharge-amount">更多</button>
+              </div>
+              <label id="custom-recharge-amount" hidden>自定义入账金额（U）
+                <input name="customAmount" type="number" inputmode="decimal" step="0.01" min="5" placeholder="例如 75.50" required disabled />
+              </label>
             </div>
             <label>支付网络<select name="network" required></select></label>
             <p class="hint">最低 5 U。请按下一步显示的精确金额转账。</p>
@@ -176,7 +178,7 @@
               <h2>地址证明生成</h2>
               <p class="hint">按所选模板生成，完成后发送到你填写的邮箱。</p>
             </div>
-            <strong>10 <small>U / 份</small></strong>
+            <strong><span id="address-price-value">—</span> <small>U / 份</small></strong>
           </div>
           <details id="address-details">
             <summary>填写订单</summary>
@@ -197,9 +199,9 @@
                   required
               /></label>
               <div class="address-payment">
-                <p class="hint">付款后开始生成。若订单处理失败，10 U 将退回账户余额。</p>
+                <p class="hint">付款后开始生成。订单处理失败时，支付金额会退回账户余额。</p>
                 <div class="buttons">
-                  <button>支付 10 U 并生成</button><a href="/__host/security">设置支付密码</a>
+                  <button id="address-pay" disabled>支付并生成</button><a href="/__host/security">设置支付密码</a>
                 </div>
               </div>
             </form>

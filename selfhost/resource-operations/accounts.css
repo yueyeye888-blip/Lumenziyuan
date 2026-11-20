@@ -16,7 +16,7 @@
 [hidden] { display: none !important; }
 body { margin: 0; }
 a { text-decoration: none; color: inherit; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { cursor: pointer; }
 button:disabled { opacity: .6; cursor: wait; }
 :focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
@@ -117,7 +117,7 @@ h1 { font-size: clamp(26px, 4vw, 36px); line-height: 1.26; letter-spacing: -.024
 .plus::before, .plus::after { position: absolute; content: ""; border-radius: 1px; background: currentColor; }
 .plus::before { width: 13px; height: 1.5px; top: 6px; left: 0; }
 .plus::after { width: 1.5px; height: 13px; top: 0; left: 6px; }
-.summary { display: grid; grid-template-columns: 1fr 1fr 1.15fr; gap: 15px; margin-bottom: 23px; }
+.summary { display: grid; grid-template-columns: repeat(3, 1fr) 1.15fr; gap: 15px; margin-bottom: 23px; }
 .metric {
   min-width: 0;
   min-height: 106px;
@@ -181,7 +181,7 @@ h2 { font-size: 19px; letter-spacing: -.015em; }
   top: 10px;
   left: 8px;
 }
-input {
+input, select {
   min-width: 0;
   width: 100%;
   border: 1px solid #cdd9e8;
@@ -192,7 +192,7 @@ input {
   min-height: 42px;
 }
 input::placeholder { color: #657790; }
-input:focus { outline: 2px solid #2457e630; outline-offset: 1px; border-color: var(--brand); }
+input:focus, select:focus { outline: 2px solid #2457e630; outline-offset: 1px; border-color: var(--brand); }
 .search-label input { min-height: 36px; padding: 7px 11px 7px 35px; font-size: 13px; }
 .accounts-table { border-spacing: 0; width: 100%; text-align: left; }
 .accounts-table th {
@@ -207,7 +207,7 @@ input:focus { outline: 2px solid #2457e630; outline-offset: 1px; border-color: v
 .accounts-table td { padding: 13px 23px; vertical-align: middle; border-bottom: 1px solid #edf1f7; font-size: 14px; }
 .accounts-table tbody tr:last-child td { border-bottom: 0; }
 .accounts-table tbody tr:hover { background: #fafcff; }
-.accounts-table th:first-child { width: 48%; }
+.accounts-table th:first-child { width: 41%; }
 .accounts-table .align-end { text-align: right; }
 .identity { display: grid; grid-template-columns: 35px 1fr; align-items: center; gap: 11px; min-width: 0; }
 .identity .initial {
@@ -235,11 +235,15 @@ input:focus { outline: 2px solid #2457e630; outline-offset: 1px; border-color: v
 }
 .role-employee { background: #edf3fe; color: #294f91; }
 .role-customer { background: #eef5f2; color: #2c6150; }
+.role-agent { background: #f1edff; color: #5a36a4; }
+.account-roles .role { white-space: nowrap; }
+.account-roles .role + .role { margin: 3px 0 3px 6px; }
 .balance { text-align: right; font-weight: 690; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .balance .unit { font-size: 12px; color: var(--muted); margin-left: 3px; }
 .account-action { text-align: right; white-space: nowrap; }
 .account-action .button { min-height: 35px; padding-inline: 10px; border-color: #d6e1f5; color: #214fbf; font-size: 13px; }
 .account-action .unavailable { color: var(--muted); }
+.account-action .button + .button { margin-left: 7px; }
 .empty-state { padding: 44px 16px; color: var(--muted); font-size: 14px; text-align: center; }
 .status { padding: 11px 14px; margin: 0 0 16px; border-radius: 9px; border: 1px solid #bde1ce; background: #edf8f2; color: #16633a; }
 .status.problem, .modal-feedback { padding: 10px 12px; border-radius: 8px; border: 1px solid #f2d3d4; background: #fff2f2; color: #9c2532; }
@@ -300,6 +304,7 @@ dialog label { display: block; font-size: 13px; font-weight: 680; margin: 14px 0
   .page-header { align-items: start; gap: 12px; }
   .page-header .button { padding-inline: 10px; min-height: 39px; }
   .page-header p { font-size: 13px; }
+  .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metric { min-height: 76px; padding: 10px; }
   .metric-label { font-size: 11px; }
   .metric strong { font-size: 20px; }
@@ -319,6 +324,12 @@ dialog label { display: block; font-size: 13px; font-weight: 680; margin: 14px 0
   }
   .accounts-table td { padding: 0; border: 0; }
   .accounts-table td:last-child { justify-self: end; }
+  .accounts-table .identity { grid-template-columns: minmax(0, 1fr); }
+  .accounts-table .initial { display: none; }
+  .accounts-table .account-action { grid-column: 1/-1; }
+  .account-roles { text-align: right; }
+  .account-roles .role + .role { display: block; margin: 4px 0 0; }
+  .filter button { padding-inline: 9px; }
   .accounts-table .balance { text-align: left; color: #183958; }
   .accounts-table .balance::before { content: "可用余额 "; font-size: 12px; color: var(--muted); font-weight: 500; }
 }

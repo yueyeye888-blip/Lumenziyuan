@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { fault } from './wallet.mjs';
+import { discountedPrice } from './pricing.mjs';
 
 export const downloadPriceRaw = 50000;
+export const downloadPriceFor = user => discountedPrice(downloadPriceRaw, user);
 const windowMs = 30 * 60_000;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -34,7 +36,7 @@ export function createArchiveDownloads({ db, wallet, now = Date.now }) {
       }
     });
   }
-  function authorize(userId, item, requestId) {
+  function authorize(userId, item, requestId, priceRaw = downloadPriceRaw) {
     if (!uuid.test(requestId || '')) throw fault(400, '下载请求编号无效，请重新打开确认窗口。');
     return wallet.atomic(() => {
       expire();
@@ -51,12 +53,16 @@ export function createArchiveDownloads({ db, wallet, now = Date.now }) {
         )
         .get(userId, item.id, item.sha256);
       if (active && !expired(active)) {
+        const hold = db.prepare('SELECT amount FROM wallet_holds WHERE reference=?').get(key(active.receipt));
+        if (active.state === 'reserved' && hold?.amount !== priceRaw) {
+          throw fault(409, '这份文件已有按上次售价确认的下载，请继续原下载，或待其到期后再试。');
+        }
         // A delayed retry of either authorization must still point to this same download.
         rememberRequest.run(userId, requestId, active.receipt);
         return active.receipt;
       }
       const receipt = randomUUID();
-      wallet.reserve(userId, key(receipt), downloadPriceRaw);
+      wallet.reserve(userId, key(receipt), priceRaw);
       db.prepare(
         "INSERT INTO archive_downloads(receipt,user_id,request_id,item_id,digest,bytes,state,expires) VALUES(?,?,?,?,?,?,'reserved',?)",
       ).run(receipt, userId, requestId, item.id, item.sha256, item.bytes, now() + windowMs);
@@ -64,7 +70,7 @@ export function createArchiveDownloads({ db, wallet, now = Date.now }) {
     });
   }
   function check(userId, item, receipt) {
-    if (!uuid.test(receipt || '')) throw fault(402, '请先确认支付 5 U，再下载原文件。');
+    if (!uuid.test(receipt || '')) throw fault(402, '请先确认价格并支付，再下载原文件。');
     const row = dbRow.get(receipt);
     if (!row || row.user_id !== userId || row.item_id !== item.id || row.digest !== item.sha256)
       throw fault(403, '下载凭证与当前账号或文件不符。');

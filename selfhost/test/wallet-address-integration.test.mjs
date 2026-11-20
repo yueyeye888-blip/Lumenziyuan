@@ -126,6 +126,15 @@ test('packaged Worker validates the billed order reference; a failed prepaid ord
     );
     assert.equal(invalid.status, 400);
     assert.equal(wallet.balance(user.id), 100000);
+    const agent = {...user, discountBps:8000};
+    await assert.rejects(bill.submit(agent,randomUUID(),payload,100000),{status:409});
+    const agentKey = randomUUID();
+    const discounted = await bill.submit(agent,agentKey,payload,80000);
+    assert.equal(discounted.data.paidAmountRaw,80000);
+    assert.equal(discounted.data.paymentStatus,'refunded');
+    assert.equal(wallet.balance(user.id),100000);
+    assert.equal(wallet.snapshot(user.id).entries.find(e=>e.reference==='refund:address:'+agentKey).delta,80000);
+    assert.equal((await bill.submit({...agent,discountBps:7500},agentKey,payload,75000)).data.paidAmountRaw,80000);
   } finally {
     await mf.dispose();
     db.close();

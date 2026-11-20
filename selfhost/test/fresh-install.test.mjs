@@ -129,6 +129,17 @@ test('new server initializes and serves the complete release using only runtime 
     const wallet=JSON.parse((await buyer('/api/commerce/wallet')).body);
     assert.equal(wallet.role,'customer');assert.equal(wallet.availableRaw,0);
     assert.equal(wallet.email,customerEmail);
+    const discount = (cookie,email,discountBps) => call(port,'/api/operations/accounts/discount',{
+      method:'POST',cookie,headers:{Origin:origin,'Content-Type':'application/json'},
+      body:JSON.stringify({email,discountBps})});
+    assert.equal((await discount(buyerCookie,customerEmail,8000)).status,403);
+    assert.equal((await discount(session,adminEmail,8000)).status,404);
+    assert.equal((await discount(session,customerEmail,10001)).status,400);
+    assert.equal((await discount(session,customerEmail,8000)).status,200);
+    assert.equal(JSON.parse((await buyer('/api/commerce/address/price')).body).priceRaw,80000);
+    assert.equal((await buyer('/__host/template-archive/catalog')).status,403);
+    assert.equal((await discount(session,customerEmail,null)).status,200);
+    assert.equal(JSON.parse((await buyer('/api/commerce/address/price')).body).priceRaw,100000);
     for(const path of ['/api/operations/accounts','/api/groups','/__host/template-archive/catalog','/__host/accounts','/api/warehouse','/api/esim/overview','/api/commerce/admin/deposits'])
       assert.equal((await buyer(path)).status,403,path);
     const adminWallet=JSON.parse((await get('/api/commerce/wallet')).body);

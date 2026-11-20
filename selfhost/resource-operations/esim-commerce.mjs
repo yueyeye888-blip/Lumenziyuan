@@ -1,17 +1,9 @@
-// Public prices and supplier charges share the vendor's 1/10,000 USD precision.
-export function retailPrice(cost) {
-  const price = cost * 2;
-  if (!Number.isSafeInteger(cost) || cost < 0 || !Number.isSafeInteger(price)) {
-    throw new Error('无效的供应商价格。');
-  }
-  return price;
-}
-
 export const paymentSchema = db => db.prepare(`CREATE TABLE IF NOT EXISTS esim_commerce_payments (
   payment_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, product_cost INTEGER NOT NULL,
   retail_amount INTEGER NOT NULL, settled INTEGER NOT NULL DEFAULT 0
 )`);
 
+// Direct supplier settlement still tracks the supplier cost for pending capacity, with no wallet leg.
 export function paymentIntent(db, key, userId, cost, amount) {
   return db.prepare('INSERT INTO esim_commerce_payments(payment_id,user_id,product_cost,retail_amount) VALUES(?,?,?,?)')
     .bind(key,userId,cost,amount);

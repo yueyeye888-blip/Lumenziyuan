@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { passwordRecord } from './auth.mjs';
 import { registrationStore } from '../registration.mjs';
+import { validDiscount } from '../commerce/pricing.mjs';
 
 const day = 86400_000;
 const lifetime = 30 * day;
@@ -20,7 +21,24 @@ export function openIdentityStore(root, { config = {}, outlook, now } = {}) {
     id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE COLLATE NOCASE, name TEXT NOT NULL, password TEXT NOT NULL
   ); CREATE TABLE IF NOT EXISTS configured_password_overrides (
     user_id TEXT PRIMARY KEY, source_version TEXT NOT NULL, password TEXT NOT NULL
+  ); CREATE TABLE IF NOT EXISTS agent_discounts (
+    user_id TEXT PRIMARY KEY, basis_points INTEGER NOT NULL CHECK(basis_points BETWEEN 1 AND 10000)
   )`);
+  const agentRate = store.prepare('SELECT basis_points FROM agent_discounts WHERE user_id=?');
+  const administrators = new Set(String(config.bindings?.RESOURCE_ADMIN_EMAILS || '').toLowerCase().split(',').map(email => email.trim()));
+  const withRate = account => account && {
+    ...account,
+    discountBps: administrators.has(account.email.toLowerCase()) ? null : agentRate.get(account.id)?.basis_points ?? null,
+  };
+  function setDiscount(userId, basisPoints) {
+    if (basisPoints === null) {
+      store.prepare('DELETE FROM agent_discounts WHERE user_id=?').run(userId);
+    } else {
+      if (!validDiscount(basisPoints)) throw new TypeError('Invalid discount');
+      store.prepare(`INSERT INTO agent_discounts VALUES(?,?)
+        ON CONFLICT(user_id) DO UPDATE SET basis_points=excluded.basis_points`).run(userId,basisPoints);
+    }
+  }
   const configuredSource = () => JSON.parse(readFileSync(usersPath, 'utf8'));
   const sourceVersion = account => hash(JSON.stringify([account.email.toLowerCase(), account.password]));
   const override = store.prepare('SELECT password FROM configured_password_overrides WHERE user_id=? AND source_version=?');
@@ -35,10 +53,10 @@ export function openIdentityStore(root, { config = {}, outlook, now } = {}) {
   const storedId = store.prepare(`SELECT id,email,name,password,'employee' AS role FROM employees WHERE id=?
     UNION ALL SELECT id,email,name,password,'customer' AS role FROM customers WHERE id=?`);
   const unpack = row => row && ({ ...row, password: JSON.parse(row.password), enabled: true });
-  const list = () => [...configured(), ...allStored.all().map(unpack)];
-  const byEmail = email => configured().find(account => account.email.toLowerCase() === email)
-    || unpack(storedEmail.get(email, email));
-  const byId = id => configured().find(account => account.id === id) || unpack(storedId.get(id, id));
+  const list = () => [...configured(), ...allStored.all().map(unpack)].map(withRate);
+  const byEmail = email => withRate(configured().find(account => account.email.toLowerCase() === email)
+    || unpack(storedEmail.get(email, email)));
+  const byId = id => withRate(configured().find(account => account.id === id) || unpack(storedId.get(id, id)));
   function insertCustomer(email, password) {
     const account = { id: randomUUID(), email, name: email.split('@')[0].slice(0,80), role: 'customer', enabled: true,
       password: passwordRecord(password) };
@@ -97,5 +115,5 @@ export function openIdentityStore(root, { config = {}, outlook, now } = {}) {
     store.prepare('DELETE FROM sessions WHERE expires<=?').run(Date.now());
     registration.cleanup();
   }
-  return { list, byEmail, issue, lookup, remove, cookie, create, registration, cleanup, close: () => store.close() };
+  return { list, byEmail, setDiscount, issue, lookup, remove, cookie, create, registration, cleanup, close: () => store.close() };
 }

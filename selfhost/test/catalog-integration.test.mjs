@@ -70,3 +70,23 @@ test('expired snapshots refresh in background once, and outage fallback ages out
   await expired;
   assert.equal(calls,4);
 });
+
+test('cached supplier products are independently priced and filtered per account', async () => {
+  let fetches=0;
+  const catalog=createEsimCatalog({}, {
+    usesSupplier:user=>user?.id==='owner',
+    supplier:{async catalog(){fetches++;return [...sample,{...sample[0],slug:'malformed',price:NaN}];}},
+  });
+  const params=new URLSearchParams({ids:'ID_Data,malformed'});
+  const owner={id:'owner'};
+  const agent={id:'agent',discountBps:8000};
+  const publicUser={id:'public'};
+  const [original,discounted,retail]=await Promise.all([owner,agent,publicUser].map(user=>catalog.response(params,user)));
+  assert.deepEqual([original,discounted,retail].map(result=>result.body.items.map(plan=>plan.priceRaw)),
+    [[12_345],[19_752],[24_690]]);
+  const limit=new URLSearchParams({ids:'ID_Data',maxPrice:'2'});
+  assert.equal((await catalog.response(limit,owner)).body.total,1);
+  assert.equal((await catalog.response(limit,agent)).body.total,1);
+  assert.equal((await catalog.response(limit,publicUser)).body.total,0);
+  assert.equal(fetches,1);
+});

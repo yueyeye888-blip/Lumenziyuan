@@ -122,12 +122,12 @@ test('order allocation, mismatch and late-payment review', async () => {
   await assert.rejects(order('buyer', 'small-12345', 4), { status: 400 });
   const [first, other] = await Promise.all([order(), order('another')]);
   assert.notEqual(first.address, other.address);
-  await assert.rejects(order('buyer', 'other-12345', 10), { status: 409 });
+  const third = await order('buyer', 'third-12345', 10);
+  assert.notEqual(third.address, first.address);
   transfer(first, 101, { amount: '49.90' });
   clock.now += 31 * 60000;
   transfer(other, 102);
-  const third = await order('buyer', 'third-12345');
-  assert.notEqual(third.address, first.address);
+  assert.equal((await order('buyer', 'third-12345', 10)).id, third.id);
   assert.equal(deposits.networks().find((n) => n.id === 'ETH').enabled, false);
   rpc.final = 102;
   await deposits.poll();
@@ -219,6 +219,10 @@ test('one shared address serves concurrent users, never reassigns a retired quot
   assert.ok(quotes.slice(9,90).every((q) => /^50\.\d{3}$/.test(q.expectedAmount)));
   assert.ok(quotes.slice(90).every(q=>/^50\.\d{4}$/.test(q.expectedAmount)));
   assert.ok(quotes.every(q => Number(q.expectedAmount) <= 50.09));
+  const followup = await shared.create({ userId: 'u0', requestId: 'same-owner-new-request', network, amount: 50 });
+  assert.notEqual(followup.id, quotes[0].id);
+  assert.notEqual(followup.expectedAmount, quotes[0].expectedAmount);
+  db.prepare('INSERT INTO deposit_request_aliases VALUES(?,?,?)').run('u0', 'another-id', quotes[0].id);
   const alias = await shared.create({ userId: 'u0', requestId: 'another-id', network, amount: 50 });
   assert.equal(alias.id, quotes[0].id);
   transfer(quotes[0], 101);
@@ -245,6 +249,42 @@ test('one shared address serves concurrent users, never reassigns a retired quot
   assert.equal(db.prepare('select count(*) n from credits').get().n, 2);
 });
 
+test('same-account concurrent quotes for integer and custom amounts settle separately with exact cents', async () => {
+  const { args, db, rpc, transfer } = fixture();
+  const deposits = createDeposits({
+    ...args,
+    config: { networks: { ETH: { mode: 'shared', rpcUrl: 'https://example.test', addresses: [address(11)] } } },
+  });
+  function create(amount, requestId = 'order-custom-1') {
+    return deposits.create({ userId: 'buyer', network: 'ETH', requestId, amount });
+  }
+  for (const invalid of ['4.99', '5.001', '5e1', '900719925475.01']) {
+    await assert.rejects(create(invalid), { status: 400 });
+  }
+  const [first, duplicate, second, third, crossing] = await Promise.all([
+    create('50.03'), create(50.03), create(50, 'order-preset-1'),
+    create('50.05', 'order-custom-2'), create('50.99', 'order-custom-3'),
+  ]);
+  const orders = [first, second, third, crossing];
+  assert.equal(first.id, duplicate.id);
+  assert.equal(new Set(orders.map((o) => o.expectedAmount)).size, orders.length);
+  assert.ok(orders.every((o) => o.status === 'pending'));
+  assert.ok(orders.every((o) => Number(o.expectedAmount) > o.amount && Number(o.expectedAmount) <= o.amount + 0.09));
+  assert.ok(orders.every((o) => !Number.isInteger(Number(o.expectedAmount))));
+  await assert.rejects(create('50.04'), { status: 409 });
+  for (const [i, order] of orders.entries()) transfer(order, 101, { index: i });
+  rpc.final = 101;
+  const restarted = createDeposits({
+    ...args,
+    config: { networks: { ETH: { mode: 'shared', rpcUrl: 'https://example.test', addresses: [address(11)] } } },
+  });
+  await restarted.poll();
+  assert.ok(restarted.list('buyer').every((o) => o.creditedAmount === o.amount));
+  assert.deepEqual(db.prepare('SELECT amount FROM credits ORDER BY amount').all().map(({ amount }) => amount), [
+    500000, 500300, 500500, 509900,
+  ]);
+});
+
 test('manual review ties confirmed event to the same target and records one atomic ledger movement', async () => {
   const { db, rpc, order, transfer, deposits } = fixture();
   const a = await order();
@@ -252,7 +292,7 @@ test('manual review ties confirmed event to the same target and records one atom
   rpc.final = 101;
   await deposits.poll();
   const event = deposits.reviews()[0],
-    cmd = { ...event, action: 'credit', userId: 'buyer', principal: 43, actor: 'admin', note: '已核对来款人' };
+    cmd = { ...event, action: 'credit', userId: 'buyer', principal: '43.08', actor: 'admin', note: '已核对来款人' };
   assert.throws(() => deposits.resolve({ ...cmd, principal: 44 }), { status: 400 });
   assert.throws(() => deposits.resolve({ ...cmd, userId: 'another' }), { status: 409 });
   assert.equal(deposits.resolve(cmd).alreadyResolved, false);
@@ -260,7 +300,7 @@ test('manual review ties confirmed event to the same target and records one atom
   assert.throws(() => deposits.resolve({ ...cmd, principal: 42 }), { status: 409 });
   assert.equal(deposits.get('buyer', a.id).status, 'credited');
   assert.equal(deposits.get('buyer', a.id).paidAmount, '43.88');
-  assert.equal(db.prepare('SELECT amount FROM credits').get().amount, 430000);
+  assert.equal(db.prepare('SELECT amount FROM credits').get().amount, 430800);
   assert.equal(deposits.reviews().length, 0);
   assert.equal(deposits.reviews(true)[0].actor, 'admin');
   transfer(a, 102);

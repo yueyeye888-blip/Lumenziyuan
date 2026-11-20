@@ -3,7 +3,9 @@ import { promisify } from 'node:util';
 import { createEsimSupplier, SupplierError } from './esim-supplier.mjs';
 import { createEsimRenewals, renewalSchema } from './esim-renewals.mjs';
 
-import { retailPrice, paymentSchema, paymentIntent, getPayment, settlePayment, recoverPayments, settlePendingPayments, supplierAvailable } from './esim-commerce.mjs';
+import { canManageAccounts } from './account-access.mjs';
+import { esimPrice } from '../commerce/pricing.mjs';
+import { paymentSchema, paymentIntent, getPayment, settlePayment, recoverPayments, settlePendingPayments, supplierAvailable } from './esim-commerce.mjs';
 
 const derive = promisify(pbkdf2);
 const supplierName = 'eSIMAccess';
@@ -57,6 +59,8 @@ function orderInput(fields) {
 export function createEsimPurchases({ config, mf, wallet, readBody, supplier = createEsimSupplier(config.bindings || {}) }) {
   const admins = new Set(String(config.bindings?.RESOURCE_ADMIN_EMAILS || '').split(',').map(email => email.trim().toLowerCase()).filter(Boolean));
   const isAdmin = user => user.role !== 'customer' && admins.has(user.email.toLowerCase());
+  const usesSupplier = user => canManageAccounts(config,user);
+  const priceFor = (cost,user) => esimPrice(cost,user,usesSupplier(user));
   const origins = new Set([config.origin, ...(config.aliasOrigins || [])]);
   let database;
   async function initialize() {
@@ -98,6 +102,29 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
     return wallet.balance(user.id);
   }
 
+  let lastBalance, balanceRequest;
+  async function refreshBalance() {
+    const raw = await supplier.balance();
+    lastBalance = { raw, at:Date.now() };
+    return raw;
+  }
+  const invalidateBalance = () => { lastBalance = null; };
+
+  async function supplierBalance(user) {
+    if (!usesSupplier(user)) return null;
+    const raw = lastBalance && Date.now() - lastBalance.at < 30_000
+      ? lastBalance.raw
+      : await (balanceRequest ??= refreshBalance().finally(() => { balanceRequest = null; }));
+    return { balanceRaw:raw, availableRaw:await supplierAvailable(await dbReady(),raw) };
+  }
+
+  async function quoteBalance(db,user,raw) {
+    const costAvailable = await supplierAvailable(db,raw);
+    return usesSupplier(user)
+      ? { paymentSource:'supplier', availableRaw:costAvailable, supplierBalanceRaw:raw }
+      : { paymentSource:'wallet', availableRaw:Math.min(availability(user),priceFor(costAvailable,user) ?? Infinity) };
+  }
+
   async function packageLines(db, user, ids, catalog) {
     const byId = new Map(catalog.map(plan => [plan.slug || plan.packageCode, plan]));
     let groupedItems = [];
@@ -114,11 +141,12 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
     }
     return ids.map(id => {
       const plan = byId.get(id);
-      check(plan && validId.test(plan.packageCode || '') && Number.isSafeInteger(plan.price) &&
-        plan.price >= 0 && plan.currencyCode === 'USD', 409, '所选套餐当前不可购买，请刷新资源市场。');
+      const priceRaw = priceFor(plan?.price,user);
+      check(plan && validId.test(plan.packageCode || '') && plan.currencyCode === 'USD' && priceRaw !== null,
+        409, '所选套餐当前不可购买，请刷新资源市场。');
       const group = groupedItems.find(item => item.product_id === id) || groupedItems.find(item => item.package_code === plan.packageCode);
       return { id, code:plan.slug || plan.packageCode, packageCode:plan.packageCode, name:plan.name,
-        priceRaw:retailPrice(plan.price), costRaw:plan.price, periodNum:Number(plan.dataType) === 2 && plan.duration === 1 ? 1 : undefined, groupId:group?.group_id || null };
+        priceRaw, costRaw:plan.price, periodNum:Number(plan.dataType) === 2 && plan.duration === 1 ? 1 : undefined, groupId:group?.group_id || null };
     });
   }
 
@@ -169,10 +197,10 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
   async function quote(db,user,ids) {
     const pending = await unresolved(db,user);
     if (pending) return { pending:{ ...present(pending), canRetry:true } };
-    const [catalog, rawBalance, security] = await Promise.all([supplier.catalog(), supplier.balance(),readSecurity(db,user)]);
+    const [catalog, rawBalance, security] = await Promise.all([supplier.catalog(), refreshBalance(),readSecurity(db,user)]);
     return {
       lines:(await packageLines(db,user,onlyIds(ids),catalog)).map(({ id, name, priceRaw, periodNum }) => ({ id,name,priceRaw,periodNum })),
-      availableRaw:Math.min(availability(user),retailPrice(await supplierAvailable(db,rawBalance))), pinConfigured:Boolean(security),
+      ...await quoteBalance(db,user,rawBalance), pinConfigured:Boolean(security),
       maxCards:maximumCards, currency:'USD',
     };
   }
@@ -201,25 +229,28 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
       }
       check(!await unresolved(db,user),409,'有一笔订单正在核对，请先查看购买记录。');
       await verifyPaymentPin(db,user,pin,await readSecurity(db,user));
-      const [catalog, balance] = await Promise.all([supplier.catalog(), supplier.balance()]);
+      const [catalog, balance] = await Promise.all([supplier.catalog(), refreshBalance()]);
       const lines = (await packageLines(db,user,items.map(item => item.id),catalog)).map((line,index) => {
         const { priceRaw, count } = items[index];
-        check(line.priceRaw === priceRaw,409,'供应商价格已变动，请重新获取报价。');
+        check(line.priceRaw === priceRaw,409,'订单价格已变动，请重新获取报价。');
         return { ...line,count };
       });
       const amount = lines.reduce((sum,line) => sum+line.priceRaw*line.count,0);
       const cost = lines.reduce((sum,line)=>sum + line.costRaw*line.count,0);
       check(Number.isSafeInteger(amount) && Number.isSafeInteger(cost),400,'订单金额无效。');
-      check(amount <= availability(user),402,'账户余额不足，请先充值。');
-      check(cost <= await supplierAvailable(db,balance),409,'供应商暂时无法接受此金额的订单。');
+      const direct = usesSupplier(user);
+      const walletAmount = direct ? 0 : amount;
+      if (!direct) check(walletAmount <= availability(user),402,'账户余额不足，请先充值。');
+      check(cost <= await supplierAvailable(db,balance),409,
+        direct ? 'eSIMAccess 供应商账户可用余额不足。' : '供应商暂时无法接受此金额的订单。');
       const timestamp = now();
       await db.batch([
         db.prepare(`INSERT INTO esim_purchase_orders(id,user_id,user_email,user_name,status,staff,amount,lines,created_at,updated_at)
           VALUES(?,?,?,?,'preparing',?,?,?,?,?)`).bind(id,user.id,user.email,user.name || user.email,isAdmin(user)?0:1,amount,JSON.stringify(lines),timestamp,timestamp),
-        paymentIntent(db,id,user.id,cost,amount),
+        paymentIntent(db,id,user.id,cost,walletAmount),
       ]);
       try {
-        if (amount) wallet.reserve(user.id,id,amount);
+        if (walletAmount) wallet.reserve(user.id,id,walletAmount);
         await db.prepare("UPDATE esim_purchase_orders SET status='submitting',updated_at=? WHERE id=?").bind(now(),id).run();
       } catch (error) {
         // No supplier call has been made yet.
@@ -243,6 +274,8 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
         .bind(rejection?'rejected':'uncertain',rejection,now(),row.id).run();
       await settlePayment(db,wallet,row.id);
       return present(await getOrder(db,row.id));
+    } finally {
+      invalidateBalance();
     }
     await recordAccepted(db,row,orderNo);
     return present(await getOrder(db,row.id));
@@ -337,7 +370,7 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
   }
 
   const renewals = createEsimRenewals({ supplier,dbReady,serialize,isAdmin,availability,wallet,check,readSecurity,verifyPaymentPin,
-    validPin,definiteFailures,supplierName });
+    validPin,definiteFailures,supplierName, usesSupplier, priceFor, quoteBalance, refreshBalance, invalidateBalance });
   const renewalPaths = new Set(['/api/esim/renewal-quote','/api/esim/renewals']);
   const paths = new Set(['/api/esim/purchase-quote','/api/esim/purchases','/api/esim/purchase-quota','/api/esim/purchase-cards',...renewalPaths]);
   async function route(req,res,url,user) {
@@ -410,7 +443,14 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
   }
   async function summary(user) {
     const db = await dbReady();
-    return { availableRaw:availability(user), ...(isAdmin(user) ? {allocatedRaw:await allocated(db)} : {}) };
+    const direct = usesSupplier(user);
+    const balance = direct ? await supplierBalance(user).catch(() => null) : null;
+    return {
+      paymentSource: direct ? 'supplier' : 'wallet',
+      availableRaw: direct ? balance?.availableRaw ?? null : availability(user),
+      ...(direct ? {supplierBalanceRaw:balance?.balanceRaw ?? null} : {}),
+      ...(isAdmin(user) ? {allocatedRaw:await allocated(db)} : {}),
+    };
   }
   async function verifyPin(user,pin) {
     check(validPin(pin),400,'请输入 6 位支付密码。');
@@ -418,5 +458,5 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
     return serialize(async () => verifyPaymentPin(db,user,pin,await readSecurity(db,user)));
   }
   const settle = async () => settlePendingPayments(await dbReady(),wallet);
-  return { route, summary, sync, reconcile, verifyPin, settle, ready:dbReady };
+  return { route, summary, sync, reconcile, verifyPin, settle, usesSupplier, supplierBalance, ready:dbReady };
 }

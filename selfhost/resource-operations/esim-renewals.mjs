@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { SupplierError } from './esim-supplier.mjs';
 
-import { retailPrice, paymentIntent, settlePayment, supplierAvailable } from './esim-commerce.mjs';
+import { paymentIntent, settlePayment, supplierAvailable } from './esim-commerce.mjs';
 
 const maxCards = 30;
 const quoteLifetime = 3 * 60_000;
@@ -53,7 +53,8 @@ const schema = [
 export const renewalSchema = db => schema.map(sql => db.prepare(sql));
 
 export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, availability, wallet, check, readSecurity,
-  verifyPaymentPin, validPin, definiteFailures, supplierName, throttle = delay }) {
+  verifyPaymentPin, validPin, definiteFailures, supplierName, usesSupplier, priceFor, quoteBalance,
+  refreshBalance, invalidateBalance, throttle = delay }) {
   const quotes = new Map();
 
   async function authorize(db,user,ids) {
@@ -66,7 +67,7 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
   const blocked = (db,id) => db.prepare(`SELECT id FROM esim_renewal_lines WHERE resource_id=? AND
     status IN ('queued','submitting','uncertain') LIMIT 1`).bind(id).first();
 
-  async function offersFor(db,resourceId,batch) {
+  async function offersFor(db,resourceId,batch,user) {
     const card = {resourceId, options:[]};
     const skip = reason => ({...card, reason});
     try {
@@ -84,13 +85,13 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
       if (profile.dataType != null && Number(profile.dataType) !== 1) {
         return skip('此按天套餐请在供应商后台确认续费天数与金额。');
       }
-      const plans = (await supplier.topupOffers(profile)).filter(compatible);
+      const plans = (await supplier.topupOffers(profile)).filter(plan => compatible(plan) && priceFor(plan.price,user) !== null);
       const preferred = matchOriginal(original,plans);
       const matched = batch ? [preferred].filter(Boolean)
         : preferred ? [preferred,...plans.filter(plan=>plan.packageCode !== preferred.packageCode)] : plans;
       if (!matched.length) return skip(batch ? '供应商未返回与原套餐匹配的续费方案。' : '供应商未返回可用的续费方案。');
       return { ...card, iccid:profile.iccid, options:matched.map(plan=>({
-        code:plan.packageCode, name:plan.name || plan.slug || plan.packageCode, priceRaw:retailPrice(plan.price), costRaw:plan.price,
+        code:plan.packageCode, name:plan.name || plan.slug || plan.packageCode, priceRaw:priceFor(plan.price,user), costRaw:plan.price,
         duration:plan.duration, volume:plan.volume, durationUnit:plan.durationUnit,
       })) };
     } catch {
@@ -109,9 +110,9 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
     const issuedAt = Date.now();
     const batch = fields.batch === true || ids.length > 1;
     const cards = [];
-    const balance = supplier.balance().catch(()=>null);
+    const balance = refreshBalance().catch(()=>null);
     for(let from=0; from<ids.length; from+=2) {
-      cards.push(...await Promise.all(ids.slice(from,from+2).map(id=>offersFor(db,id,batch))));
+      cards.push(...await Promise.all(ids.slice(from,from+2).map(id=>offersFor(db,id,batch,user))));
       if (from+2<ids.length) await throttle(550);
     }
     const raw = await balance;
@@ -122,8 +123,8 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
       for (const [key,record] of quotes) if (record.expiresAt <= Date.now()) quotes.delete(key);
       if (quotes.size>=256) quotes.delete(quotes.keys().next().value);
     }
-    quotes.set(id,{id, userId:user.id, cards, issuedAt,expiresAt, single:!batch});
-    return { id, cards:cards.map(publicCard), availableRaw:Math.min(availability(user),retailPrice(await supplierAvailable(db,raw))),
+    quotes.set(id,{id, userId:user.id, direct:usesSupplier(user), cards, issuedAt,expiresAt, single:!batch});
+    return { id, cards:cards.map(publicCard), ...await quoteBalance(db,user,raw),
       pinConfigured:Boolean(await readSecurity(db,user)), expiresAt:new Date(expiresAt).toISOString() };
   }
 
@@ -161,6 +162,8 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
             .bind(failure?'rejected':'uncertain',failure,now(),line.transactionId).run();
           await settlePayment(db,wallet,line.transactionId);
           return;
+        } finally {
+          invalidateBalance();
         }
         await recordSuccess(db,line,result);
       }).catch(async () => {
@@ -184,6 +187,7 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
         return { id, records:prior.map(present) };
       }
       const approved = quotes.get(id);
+      const direct = usesSupplier(user);
       check(approved?.userId===user.id && approved.expiresAt>Date.now(),409,'报价已过期，请重新获取报价。');
       const permitted = approved.cards.filter(card=>card.options.length).map(card=>{
         const option = approved.single ? card.options.find(plan=>plan.code===code) : card.options[0];
@@ -191,6 +195,8 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
         return { ...option, resourceId:card.resourceId, iccid:card.iccid, cardName:card.name, maskedIccid:card.maskedIccid };
       });
       check(permitted.length>0,409,'本次没有可以续费的 eSIM。');
+      check(approved.direct === direct && permitted.every(line => priceFor(line.costRaw,user) === line.priceRaw),
+        409,'账号价格已变动，请重新获取报价。');
       await authorize(db,user,permitted.map(line=>line.resourceId));
       const since = new Date(approved.issuedAt).toISOString();
       for (const line of permitted) {
@@ -200,11 +206,12 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
       }
       await verifyPaymentPin(db,user,pin,await readSecurity(db,user));
       const amount = permitted.reduce((sum,line)=>sum+line.priceRaw,0);
-      const balance = await supplier.balance();
+      const balance = await refreshBalance();
       const cost = permitted.reduce((sum,line)=>sum+line.costRaw,0);
       check(Number.isSafeInteger(amount) && Number.isSafeInteger(cost),400,'订单金额无效。');
-      check(amount<=availability(user),402,'账户余额不足，请先充值。');
-      check(cost<=await supplierAvailable(db,balance),409,'供应商暂时无法接受此金额的订单。');
+      if (!direct) check(amount<=availability(user),402,'账户余额不足，请先充值。');
+      check(cost<=await supplierAvailable(db,balance),409,
+        direct ? 'eSIMAccess 供应商账户可用余额不足。' : '供应商暂时无法接受此金额的订单。');
       const staff = isAdmin(user)?0:1;
       const date = now();
       const lines=permitted.map((line,index)=>({...line,transactionId:id+'-'+String(index+1).padStart(2,'0')}));
@@ -212,9 +219,9 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
         (id,batch_id,user_id,user_email,staff,resource_id,card_label,masked_iccid,plan_name,amount,status,created_at,updated_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,'queued',?,?)`).bind(line.transactionId,id,user.id,user.email,staff,
           line.resourceId,line.cardName,line.maskedIccid,line.name,line.priceRaw,date,date),
-        paymentIntent(db,line.transactionId,user.id,line.costRaw,line.priceRaw)]));
+        paymentIntent(db,line.transactionId,user.id,line.costRaw,direct ? 0 : line.priceRaw)]));
       try {
-        for (const line of lines) if (line.priceRaw) wallet.reserve(user.id,line.transactionId,line.priceRaw);
+        if (!direct) for (const line of lines) if (line.priceRaw) wallet.reserve(user.id,line.transactionId,line.priceRaw);
       } catch (error) {
         await db.prepare("UPDATE esim_renewal_lines SET status='not_sent',error='余额预留失败，未发送续费。' WHERE batch_id=? AND status='queued'").bind(id).run();
         for (const line of lines) await settlePayment(db,wallet,line.transactionId);

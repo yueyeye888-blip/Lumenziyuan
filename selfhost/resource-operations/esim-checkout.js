@@ -143,6 +143,10 @@
     if (order.status === 'ready') refresh();
   }
 
+  function paymentSource(quote) {
+    return quote.paymentSource === 'supplier' ? 'eSIMAccess 供应商余额' : '站内钱包';
+  }
+
   async function checkout(selection) {
     const frame = dialog(selection.ids.length === 1 ? '购买套餐' : '合并购买');
     if (!frame) return;
@@ -172,7 +176,7 @@
     const summary = node('div',undefined,'lumen-buy-summary');
     const amount = node('strong','');
     const unitCount = node('p','');
-    summary.append(amount,unitCount,node('p','本次可用 ' + money(quote.availableRaw)));
+    summary.append(amount,unitCount,node('p',paymentSource(quote) + '可用 ' + money(quote.availableRaw)));
     const label = node('label','6 位支付密码','lumen-buy-pin');
     const pin = node('input');
     Object.assign(pin,{type:'password',inputMode:'numeric',autocomplete:'off',maxLength:6,required:true,pattern:'[0-9]{6}'});
@@ -184,7 +188,7 @@
     const cancel = button('取消',() => modal.close());
     actions.append(cancel,submit);
     form.append(list,summary);
-    const warning = node('p','确认后由 eSIMAccess 创建真实订单并扣款。','lumen-buy-note');
+    const warning = node('p',quote.paymentSource === 'supplier' ? '确认后按供应商原价从 eSIMAccess 账户余额结算。' : '确认后从站内钱包扣款，由 eSIMAccess 创建订单。','lumen-buy-note');
     if (quote.pinConfigured) form.append(label,warning);
     else {
       form.append(node('p','请先设置支付密码，再回来确认购买。','lumen-buy-note'));
@@ -202,7 +206,7 @@
       const total = quote.lines.reduce((sum,line,index) => sum + line.priceRaw * counts[index],0);
       amount.textContent = valid ? '合计 ' + money(total) : '请核对购买数量';
       unitCount.textContent = valid ? count + ' 张 eSIM' : '每单合计最多 ' + quote.maxCards + ' 张';
-      feedback.textContent = valid && total > quote.availableRaw ? '本次可用金额不足。' : '';
+      feedback.textContent = valid && total > quote.availableRaw ? paymentSource(quote) + '余额不足。' : '';
       submit.disabled = !valid || !quote.pinConfigured || total > quote.availableRaw || busy || blocked;
       return valid && total <= quote.availableRaw;
     };
@@ -414,7 +418,7 @@
     form.append(list);
     const summary=node('div',undefined,'lumen-buy-summary');
     const amount=node('strong','');
-    summary.append(amount,node('p','本次可用 '+money(quote.availableRaw)));
+    summary.append(amount,node('p',paymentSource(quote) + '可用 ' + money(quote.availableRaw)));
     if (quote.cards.length > rows.length) summary.append(node('p',quote.cards.length-rows.length+' 张无法续费，实际提交 '+rows.length+' 张。'));
     form.append(summary);
     feedback.textContent='';
@@ -436,7 +440,7 @@
     const submit=button('确认续费',undefined,true);
     submit.type='submit';
     actions.append(submit);
-    form.append(pinLabel,node('p','确认后向 eSIMAccess 提交续费，按每张卡的供应商回执显示结果。','lumen-buy-note'),feedback,actions);
+    form.append(pinLabel,node('p',quote.paymentSource === 'supplier' ? '确认后按供应商原价从 eSIMAccess 账户余额结算。' : '确认后从站内钱包扣款，按每张卡的供应商回执显示结果。','lumen-buy-note'),feedback,actions);
     content.replaceChildren(form);
     let busy=false;
     function validate() {
@@ -444,7 +448,7 @@
         rows.reduce((amount,card)=>amount+card.options[0].priceRaw,0);
       amount.textContent='应付 '+money(total);
       submit.disabled=busy || total>quote.availableRaw;
-      feedback.textContent=total>quote.availableRaw ? '可用金额不足。' : '';
+      feedback.textContent=total>quote.availableRaw ? paymentSource(quote) + '余额不足。' : '';
     }
     validate();
     choose.addEventListener('change',validate);

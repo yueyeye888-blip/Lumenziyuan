@@ -36,7 +36,7 @@
       <div class="page-header">
         <div>
           <h1>员工与额度</h1>
-          <p>创建员工账号、查询可用余额，并记录每笔额度增加。</p>
+          <p>创建员工、增加账户额度，并为代理设置采购折扣。</p>
         </div>
         <button type="button" class="button primary" id="new-employee">
           <span class="plus" aria-hidden="true"></span>创建员工
@@ -50,6 +50,10 @@
         <div class="metric">
           <span class="metric-label">平台注册用户</span>
           <strong id="customer-count">—</strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">代理账号</span>
+          <strong id="agent-count">—</strong>
         </div>
         <div class="metric">
           <span class="metric-label">员工可用余额合计</span>
@@ -66,6 +70,7 @@
           <div class="filter" aria-label="账号类型">
             <button type="button" data-role="employee" aria-pressed="true">员工</button>
             <button type="button" data-role="customer" aria-pressed="false">平台用户</button>
+            <button type="button" data-role="agent" aria-pressed="false">代理</button>
             <button type="button" data-role="all" aria-pressed="false">全部账号</button>
           </div>
           <label class="search-label">
@@ -77,7 +82,7 @@
           <thead role="rowgroup">
             <tr role="row">
               <th scope="col" role="columnheader">账号</th>
-              <th scope="col" role="columnheader">身份</th>
+              <th scope="col" role="columnheader">身份 / 折扣</th>
               <th scope="col" role="columnheader" class="align-end">可用余额</th>
               <th scope="col" role="columnheader" class="align-end">操作</th>
             </tr>
@@ -90,7 +95,7 @@
         <div class="dialog-head">
           <div>
             <h2 id="employee-title">创建员工</h2>
-            <p id="employee-description">员工使用下方邮箱和初始密码登录。</p>
+            <p id="employee-description">员工使用你填写的邮箱和初始密码登录。</p>
           </div>
           <button type="button" class="close" data-close="employee-dialog" aria-label="关闭">×</button>
         </div>
@@ -98,7 +103,7 @@
           <label for="employee-name">员工姓名</label>
           <input id="employee-name" name="name" maxlength="80" required />
           <label for="employee-email">登录邮箱</label>
-          <input id="employee-email" name="email" type="email" maxlength="254" required />
+          <input id="employee-email" name="email" type="email" inputmode="email" autocomplete="section-create-employee email" autocapitalize="none" spellcheck="false" maxlength="254" required />
           <label for="employee-password">初始密码</label>
           <input id="employee-password" name="password" type="password" minlength="12" maxlength="128"
                  required autocomplete="new-password" aria-describedby="employee-password-hint" />
@@ -136,6 +141,37 @@
           <div class="dialog-actions">
             <button type="button" class="button neutral" data-close="credit-dialog">取消</button>
             <button class="button primary" type="submit">确认增加额度</button>
+          </div>
+        </form>
+      </dialog>
+      <dialog id="discount-dialog" aria-labelledby="discount-title" aria-describedby="discount-description">
+        <div class="dialog-head">
+          <div>
+            <h2 id="discount-title">代理折扣</h2>
+            <p id="discount-description">折扣按平台零售价计算。设置后，即时应用于新订单。</p>
+          </div>
+          <button type="button" class="close" data-close="discount-dialog" aria-label="关闭">×</button>
+        </div>
+        <p class="credit-target" id="discount-account"></p>
+        <form id="discount-form">
+          <label for="discount-mode">定价方式</label>
+          <select id="discount-mode" name="mode">
+            <option value="standard">普通定价</option>
+            <option value="agent">代理折扣</option>
+          </select>
+          <div id="discount-fields">
+            <label for="discount-percent">按零售价支付</label>
+            <div class="amount-field">
+              <input id="discount-percent" type="number" min="0.01" max="100" step="0.01"
+                     name="percent" inputmode="decimal" aria-describedby="discount-help" />
+              <span aria-hidden="true">%</span>
+            </div>
+            <p class="field-help" id="discount-help">填写 80 表示 8 折。顾客原应付 100 U，代理应付 80 U。</p>
+          </div>
+          <p class="modal-feedback" role="alert" hidden></p>
+          <div class="dialog-actions">
+            <button type="button" class="button neutral" data-close="discount-dialog">取消</button>
+            <button class="button primary" type="submit">保存定价</button>
           </div>
         </form>
       </dialog>

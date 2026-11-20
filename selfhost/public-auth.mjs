@@ -284,7 +284,7 @@ function notice(error, message) {
 
 function emailInput(autocomplete='email', email='') {
   return `<div class="field"><label for="email">邮箱地址</label><input id="email" name="email" type="email" inputmode="email" autocapitalize="none" spellcheck="false"
-    autocomplete="${autocomplete}" maxlength="254" placeholder="name@example.com" value="${escape(email)}" required></div>`;
+    autocomplete="${autocomplete}" maxlength="254" placeholder="请输入邮箱地址"${email ? ` value="${escape(email)}"` : ''} required></div>`;
 }
 
 function passwordInput(isNew, label) {

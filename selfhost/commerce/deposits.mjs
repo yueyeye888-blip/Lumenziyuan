@@ -6,9 +6,17 @@ const failure = (status, message) => Object.assign(new Error(message), { status,
 const stamp = (ms) => new Date(ms).toISOString();
 const ids = Object.keys(chains);
 const waitingMs = minutes(30);
-function amountText(units, network) {
-  const scale = BigInt(10) ** BigInt(chains[network].decimals);
-  const places = (BigInt(units) % scale).toString().padStart(chains[network].decimals, '0').replace(/0+$/, '');
+const chainScale = (network) => 10n ** BigInt(chains[network].decimals);
+const walletUnitsPerCent = 100;
+function principalMinor(value) {
+  const match = /^(0|[1-9]\d{0,11})(?:\.(\d{1,2}))?$/.exec(String(value ?? ''));
+  if (!match) return null;
+  const minor = Number(match[1]) * 100 + Number((match[2] || '').padEnd(2, '0'));
+  return Number.isSafeInteger(minor * walletUnitsPerCent) ? minor : null;
+}
+function amountText(units, network, minimumDecimals = 0) {
+  const scale = chainScale(network);
+  const places = (BigInt(units) % scale).toString().padStart(chains[network].decimals, '0').replace(/0+$/, '').padEnd(minimumDecimals, '0');
   return (BigInt(units) / scale).toString() + (places ? '.' + places : '');
 }
 
@@ -69,9 +77,6 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
   function match(network, event) {
     return byAmount.get(network, event.receiver, event.units) ?? uniqueOrder.get(network, event.receiver);
   }
-  const active = db.prepare(
-    'SELECT id, principal FROM deposit_orders WHERE user_id=? AND network=? AND credited_hash IS NULL AND expires_ms>? ORDER BY created_ms DESC LIMIT 1'
-  );
   const checkpoint = db.prepare('SELECT height FROM deposit_cursors WHERE network=?');
   function transaction(operation) {
     db.exec('BEGIN IMMEDIATE');
@@ -105,7 +110,7 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
       tokenContract: row.network === 'TRON' ? 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t' : chains[row.network].contract,
       address: row.address,
       amount: row.principal,
-      expectedAmount: row.principal + '.' + row.fraction,
+      expectedAmount: amountText(row.units, row.network, 2),
       paidAmount: actual == null ? null : amountText(actual, row.network),
       status,
       txHash,
@@ -125,7 +130,9 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
     const hasOrders = db.prepare('SELECT 1 FROM deposit_orders WHERE network=? AND recipient=? LIMIT 1');
     return pool.filter(([key]) => (modes.get(id) === 'shared' ? !uniqueOrder.get(id, key) : !hasOrders.get(id, key)));
   }
-  function quote(network, receiver, principal, mode) {
+  function quote(network, receiver, minor, mode) {
+    const scale = chainScale(network);
+    const base = BigInt(minor) * (scale / 100n);
     const prior = db.prepare('SELECT 1 FROM deposit_orders WHERE network=? AND recipient=? AND units=?');
     const seen = db.prepare('SELECT 1 FROM deposit_events WHERE network=? AND address=? AND units=? LIMIT 1');
     const existing =
@@ -133,7 +140,7 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
         ? new Set(
             db
               .prepare('SELECT fraction FROM deposit_orders WHERE network=? AND recipient=? AND principal=?')
-              .all(network, receiver, principal)
+              .all(network, receiver, minor / 100)
               .map((row) => row.fraction)
           )
         : new Set();
@@ -145,12 +152,13 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
         if (digits > 2 && n % 10 === 0) continue;
         const fraction = String(n).padStart(digits, '0');
         if (existing.has(fraction)) continue;
-        const units = BigInt(String(principal) + fraction) * 10n ** BigInt(chains[network].decimals - digits);
+        const units = base + BigInt(n) * 10n ** BigInt(chains[network].decimals - digits);
+        if (units % scale === 0n) continue;
         if (!prior.get(network, receiver, units.toString()) && !seen.get(network, receiver, units.toString()))
           return { fraction, units: units.toString() };
       }
     }
-    throw failure(503, '这个金额的尾数已用完，请选择其他整数金额。');
+    throw failure(503, '这个金额的尾数已用完，请选择其他金额。');
   }
   function networks() {
     return ids.map((id) => ({
@@ -176,23 +184,17 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
       !/^[a-z0-9_-]{8,100}$/i.test(requestId)
     )
       throw failure(400, '缺少有效的充值请求编号。');
-    if (!ids.includes(network) || !/^[1-9]\d*$/.test(String(amount)))
-      throw failure(400, '请选择充值网络并输入至少 5 U 的整数金额。');
-    const principal = Number(amount);
-    if (!Number.isSafeInteger(principal * 10000) || principal < 5) throw failure(400, '充值金额超出范围。');
+    const minor = principalMinor(amount);
+    if (!ids.includes(network) || minor === null || minor < 500)
+      throw failure(400, '请选择充值网络并输入至少 5 U 的金额，最多两位小数。');
+    const principal = minor / 100;
     function existing() {
+      // Existing aliases from earlier versions still identify the same order on retry.
       const prior = byRequest.get(userId, requestId, userId, requestId);
-      if (prior) {
-        if (prior.network !== network || prior.principal !== principal) throw failure(409, '请求编号已用于其他充值。');
-        return get(userId, prior.id);
-      }
-      const open = active.get(userId, network, now());
-      if (open) {
-        if (open.principal !== principal) throw failure(409, '此网络已有待支付充值，请先完成或等待其到期。');
-        db.prepare('INSERT OR IGNORE INTO deposit_request_aliases VALUES(?,?,?)').run(userId, requestId, open.id);
-        return get(userId, open.id);
-      }
-      return null;
+      if (!prior) return null;
+      if (prior.network !== network || principalMinor(prior.principal) !== minor)
+        throw failure(409, '请求编号已用于其他充值。');
+      return get(userId, prior.id);
     }
     const prior = existing();
     if (prior) return prior;
@@ -222,7 +224,7 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
         mode = modes.get(network),
         id = randomUUID(),
         created = now();
-      const { fraction, units } = quote(network, recipient, principal, mode);
+      const { fraction, units } = quote(network, recipient, minor, mode);
       db.prepare('INSERT OR IGNORE INTO deposit_cursors VALUES(?,?)').run(network, heads.finalized.number);
       db.prepare(
         `INSERT INTO deposit_orders(id,user_id,request_id,network,address,recipient,principal,fraction,mode,units,start_block,created_ms,expires_ms)
@@ -269,7 +271,7 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
     if (!inserted.changes || disposition !== 'credited') return;
     const result = credit({
       userId: row.user_id,
-      amountRaw: row.principal * 10000,
+      amountRaw: principalMinor(row.principal) * walletUnitsPerCent,
       reference: 'deposit:' + row.id,
       note: network + ' USDT ' + event.txHash,
     });
@@ -398,21 +400,22 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
       throw failure(400, '请填写核对说明（最多 500 字）。');
     txHash = txHash.toLowerCase();
     return transaction(() => {
+      let minor = null;
       const event = db
         .prepare('SELECT * FROM deposit_events WHERE network=? AND tx_hash=? AND log_index=?')
         .get(network, txHash, logIndex);
       if (!event) throw failure(404, '未找到已确认的转账事件。');
       if (event.disposition === 'credited') throw failure(409, '该转账已经自动入账。');
       if (action === 'credit') {
+        minor = principalMinor(principal);
         if (
           typeof userId !== 'string' ||
           !userId ||
-          !/^[1-9]\d*$/.test(String(principal)) ||
-          !Number.isSafeInteger(Number(principal) * 10000) ||
-          BigInt(principal) * 10n ** BigInt(chains[network].decimals) > BigInt(event.units)
+          !minor ||
+          BigInt(minor) * (chainScale(network) / 100n) > BigInt(event.units)
         )
-          throw failure(400, '请选择接收账号，入账本金须为正整数且不能超过实际收到的 USDT。');
-        principal = Number(principal);
+          throw failure(400, '请选择接收账号，入账本金须大于 0、最多两位小数，且不可超过收到的 USDT。');
+        principal = minor / 100;
       } else {
         userId = null;
         principal = null;
@@ -438,7 +441,7 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
           if (!order || order.user_id !== userId || order.network !== network || order.recipient !== event.address)
             throw failure(409, '所选订单的账号、链或收款地址不符。');
           if (order.credited_hash) throw failure(409, '该订单已经入账。');
-          if (principal > order.principal) throw failure(409, '入账金额超过所选订单本金。');
+          if (minor > principalMinor(order.principal)) throw failure(409, '入账金额超过所选订单本金。');
           db.prepare(
             'UPDATE deposit_orders SET credited_hash=?, credited_index=?, credited_principal=? WHERE id=?'
           ).run(txHash, logIndex, principal, linkedId);
@@ -448,7 +451,7 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
           : 'deposit-manual:' + network + ':' + txHash + ':' + logIndex;
         const result = credit({
           userId,
-          amountRaw: principal * 10000,
+          amountRaw: minor * walletUnitsPerCent,
           reference,
           actor,
           note: '管理员核对 ' + network + ' ' + txHash,

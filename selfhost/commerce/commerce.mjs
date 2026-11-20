@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { qrcode } from './vendor/qrcode.mjs';
 import { fault, amountRaw } from './wallet.mjs';
 import { trustedHeaders } from '../auth.mjs';
-import { createAddressBilling, addressPriceRaw } from './address-billing.mjs';
+import { createAddressBilling, addressPriceFor } from './address-billing.mjs';
 import { createWarehouse } from './warehouse.mjs';
 
 const uuid = /^[a-f\d]{8}-[a-f\d]{4}-4[a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/i;
@@ -90,15 +90,20 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
           throw fault(400, '请求格式无效或内容过大。');
         }
       };
-      if (path === '/api/commerce/wallet' && req.method === 'GET')
+      if (path === '/api/commerce/wallet' && req.method === 'GET') {
+        const usesSupplier = canManageAccounts(config,user);
+        const supplier = usesSupplier ? await purchases.supplierBalance(user).catch(() => null) : null;
         return json(res, 200, {
           ...wallet.snapshot(user.id),
           email: user.email,
           role: admin(user) ? 'admin' : user.role === 'customer' ? 'customer' : 'employee',
           canManageAccounts: canManageAccounts(config,user),
           networks: deposits.networks(),
-          priceAddressRaw: addressPriceRaw,
+          priceAddressRaw: addressPriceFor(user),
+          discountBps: user.discountBps ?? null,
+          ...(usesSupplier && { esimSupplierBalanceRaw: supplier?.balanceRaw ?? null }),
         });
+      }
       if (path === '/api/commerce/deposits' && req.method === 'GET')
         return json(res, 200, { orders: deposits.list(user.id) });
       if (path === '/api/commerce/deposits' && req.method === 'POST') {
@@ -166,7 +171,7 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
             logIndex: f.logIndex,
             action: f.action,
             userId: account?.id,
-            principal: f.principal ? Number(f.principal) : undefined,
+            principal: f.principal,
             orderId: f.orderId || undefined,
             actor: user.id,
             note: f.note,
@@ -175,6 +180,9 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
         }
         if (path.endsWith('/deposits') && req.method === 'GET')
           return json(res, 200, { health: deposits.health(), reviews: deposits.reviews() });
+      }
+      if (path === '/api/commerce/address/price' && req.method === 'GET') {
+        return json(res,200,{priceRaw:addressPriceFor(user)});
       }
       if (path === '/api/commerce/address/templates' && req.method === 'GET') {
         const r = await mf.dispatchFetch(new URL('/api/supplier-templates', config.origin).href, {
@@ -203,6 +211,7 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
           user,
           req.headers['idempotency-key'],
           Buffer.from(JSON.stringify({ template: data.template, profile: data.profile })),
+          data.quotedPriceRaw,
         );
         return json(res, reply.status, reply.data);
       }

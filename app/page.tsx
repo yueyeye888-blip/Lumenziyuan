@@ -1015,7 +1015,7 @@ function StoreView(props: StoreViewProps) {
           </h1>
           <p className="mt-2 text-sm text-slate-500">
             {isAdmin
-              ? "套餐售价为供应商报价的两倍，付款时按 1 U 抵 1 美元。"
+              ? "按当前账号显示结算价，付款时 1 U 抵 1 美元。"
               : "按分组查找套餐，使用账户余额购买。"}
           </p>
         </div>
@@ -3726,7 +3726,6 @@ function WarehouseView() {
       };
       if (!response.ok) throw new Error(result.error || "仓库加载失败");
       setData(result);
-      setRecipientEmail((current) => current || result.viewer.email);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "仓库加载失败");
     } finally {
@@ -3742,7 +3741,7 @@ function WarehouseView() {
     setClaimBatch({ ...batch, requestId: crypto.randomUUID() });
     setStockPin("");
     setQuantity(1);
-    setRecipientEmail(data?.viewer.email || "");
+    setRecipientEmail("");
     setError("");
   };
 
@@ -4268,7 +4267,8 @@ function WarehouseView() {
                   onChange={(event) =>
                     setRecipientEmail(event.target.value.trim())
                   }
-                  placeholder="name@company.com"
+                  autoComplete="off"
+                  placeholder="请输入本次接收邮箱"
                   className="h-12 w-full rounded-xl border border-slate-200 px-4 text-sm outline-none focus:border-[#87a3d9]"
                 />
                 <span className="mt-2 block text-[11px] leading-5 text-slate-400">
@@ -4642,7 +4642,7 @@ function GroupModal({
               required
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="例如：印尼 Levi 专属"
+              placeholder="例如：印尼市场组"
               className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm outline-none focus:border-[#87a3d9]"
             />
           </label>

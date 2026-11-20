@@ -103,7 +103,7 @@ form {
   gap: 14px;
   max-width: 35rem;
 }
-label {
+label, #recharge-amount-label {
   display: grid;
   align-content: start;
   gap: 6px;
@@ -627,9 +627,13 @@ dialog form {
 #deposit-form > button {
   width: 100%;
 }
+.amount-picker {
+  display: grid;
+  gap: 8px;
+}
 .presets {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 7px;
 }
 .presets button {
@@ -1079,3 +1083,15 @@ dialog form {
     max-width: none;
   }
 }
+
+.supplier-funds {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 20px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.supplier-funds h2 { margin: 0; font-size: 16px; }
+.supplier-funds p { margin: 5px 0 0; color: #53647e; font-size: 13px; }
+.supplier-funds strong { color: #142441; font-size: 23px; font-variant-numeric: tabular-nums; }

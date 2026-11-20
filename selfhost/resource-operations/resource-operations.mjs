@@ -1,10 +1,10 @@
 import { canManageAccounts } from './account-access.mjs';
+import { esimPrice, validDiscount } from '../commerce/pricing.mjs';
 import { readFileSync } from 'node:fs';
 import { webcrypto } from 'node:crypto';
 import { trustedHeaders } from './auth.mjs';
 import { makeEsimWorkbook } from './esim-export.mjs';
 import { openEsimMailLog, normalizeRecipient } from './esim-mail-log.mjs';
-import { retailPrice } from './esim-commerce.mjs';
 import { maxWorkbookBytes } from '../outlook-mail.mjs';
 
 const day = 86_400_000;
@@ -66,9 +66,10 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       const reply = await dispatch(url.pathname + url.search,user);
       const data = await reply.json();
       if (reply.ok && Array.isArray(data.items)) {
-        data.items = data.items.map(item => {
-          const priceRaw = retailPrice(item.priceRaw);
-          return {...item,priceRaw,price:priceRaw/10_000};
+        const direct = purchases.usesSupplier(user);
+        data.items = data.items.flatMap(item => {
+          const priceRaw = esimPrice(item.priceRaw,user,direct);
+          return priceRaw === null ? [] : [{...item,priceRaw,price:priceRaw/10_000}];
         });
       }
       json(res,reply.status,data); return true;
@@ -97,10 +98,29 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       res.writeHead(200, {'content-type':'application/javascript; charset=utf-8','cache-control':'private, no-store','x-content-type-options':'nosniff'});
       res.end(readFileSync(`${root}/resource-operations/portal.js`)); return true;
     }
+    if (url.pathname === '/api/operations/accounts/discount') {
+      if (!canManageAccounts(config,user)) { json(res,403,{error:'仅超级管理员可设置代理折扣。'}); return true; }
+      if (req.method !== 'POST' || req.headers.origin !== config.origin || !/^application\/json\b/i.test(req.headers['content-type'] || '')) {
+        json(res,405,{error:'请求方式不支持'}); return true;
+      }
+      let fields;
+      try { fields=JSON.parse(await readBody(req)); }
+      catch { json(res,400,{error:'无法读取账号资料'}); return true; }
+      const email = typeof fields?.email === 'string' ? fields.email.trim().toLowerCase() : '';
+      if (!email || (fields.discountBps !== null && !validDiscount(fields.discountBps))) {
+        json(res,400,{error:'折扣比例请输入 0.01% 至 100%，或选择取消代理。'}); return true;
+      }
+      const account=identities.byEmail(email);
+      if (!account || account.enabled === false || admin(account)) {
+        json(res,404,{error:'请选中启用的员工或普通用户账号。'}); return true;
+      }
+      identities.setDiscount(account.id,fields.discountBps);
+      json(res,200,{email:account.email,discountBps:fields.discountBps}); return true;
+    }
     if (url.pathname === '/api/operations/accounts') {
       if (!canManageAccounts(config,user)) { json(res,403,{error:'仅超级管理员可管理员工与额度。'}); return true; }
       if (req.method === 'GET') {
-        json(res,200,{accounts:identities.list().map(account => ({email:account.email,name:account.name,availableRaw:wallet.balance(account.id),enabled:account.enabled !== false,admin:admin(account),role:admin(account) ? 'admin' : account.role === 'customer' ? 'customer' : 'employee'}))}); return true;
+        json(res,200,{accounts:identities.list().map(account => ({email:account.email,name:account.name,availableRaw:wallet.balance(account.id),enabled:account.enabled !== false,discountBps:admin(account) ? null : account.discountBps,admin:admin(account),role:admin(account) ? 'admin' : account.role === 'customer' ? 'customer' : 'employee'}))}); return true;
       }
       if (req.method === 'POST' && req.headers.origin === config.origin && /^application\/json\b/.test(req.headers['content-type'] || '')) {
         let fields;
