@@ -90,3 +90,45 @@ test('cached supplier products are independently priced and filtered per account
   assert.equal((await catalog.response(limit,publicUser)).body.total,0);
   assert.equal(fetches,1);
 });
+
+test('comparison filters and sorting apply across the full catalog before pagination', async () => {
+  const gb = 1024 ** 3;
+  const mb = 1024 ** 2;
+  const plans = [
+    {...sample[0],durationUnit:'DAY',activeType:2,dataType:1,price:60000},
+    {...sample[1],durationUnit:'DAY',activeType:1,dataType:1,price:35000},
+    {...sample[2],durationUnit:'DAY',activeType:2,dataType:1,price:76000},
+    {slug:'Asia_Daily',packageCode:'Asia-SG-MY',name:'Regional Day Pass',location:'SG, MY, SG',
+      price:30000,currencyCode:'USD',volume:500*mb,duration:1,durationUnit:'DAY',activeType:'2',dataType:'2'},
+    {slug:'Unlimited_ID',packageCode:'unli789',name:'Unlimited Indonesia',location:'ID',price:12000,
+      currencyCode:'USD',volume:0,duration:24,durationUnit:'HOUR',activeType:1,dataType:4},
+    {...sample[1],slug:'foreign_currency',location:'MX',currencyCode:'EUR'},
+  ];
+  const received = [];
+  const catalog=createEsimCatalog({}, {supplier:{async catalog(location){received.push(location);return plans;}}});
+  const search = fields => catalog.response(new URLSearchParams(fields));
+  const onlyRegional = await search({region:'SG',name:'regional',slug:'asia-sg',
+    durationDays:'1',activeType:'2',dataType:'2',dataAmount:'500',dataUnit:'MB',facets:'1'});
+  assert.deepEqual(onlyRegional.body.items.map(({id,regionCodes,activeType,dataType,durationDays,pricePerGbRaw}) =>
+    [id,regionCodes,activeType,dataType,durationDays,pricePerGbRaw]),
+    [['Asia_Daily',['SG','MY'],2,2,1,122880]]);
+  assert.deepEqual(new Set(onlyRegional.body.facets.regions.map(region=>region.code)),new Set(['CN','ID','SG','MY','MULTI']));
+  assert.deepEqual(onlyRegional.body.facets.activeTypes,[1,2]);
+  assert.deepEqual(onlyRegional.body.facets.dataTypes,[1,2,4]);
+
+  const alternative = await search({region:'multi',q:'马来西亚'});
+  assert.deepEqual(alternative.body.items.map(plan=>plan.id),['Asia_Daily']);
+  const first = await search({sort:'unitPrice',direction:'asc',limit:'1'});
+  assert.equal(first.body.hasMore,true);
+  assert.equal(first.body.total,5);
+  assert.deepEqual(first.body.items.map(plan=>plan.id),['CN_Data']);
+  const last = await search({sort:'unitPrice',direction:'desc',offset:'4',limit:'1'});
+  assert.deepEqual(last.body.items.map(plan=>[plan.id,plan.pricePerGbRaw]),[['Unlimited_ID',null]]);
+  assert.equal(last.body.hasMore,false);
+  const byData = await search({sort:'data',direction:'desc',dataAmount:'1',dataUnit:'GB'});
+  assert.deepEqual(byData.body.items.map(plan=>[plan.id,plan.volume]),[['SG_Data',gb]]);
+  assert.equal((await search({sort:'duration',direction:'asc',limit:'1'})).body.items[0].durationDays,1);
+  assert.equal(received.length,1);
+  assert.equal((await search({location:'SG'})).cache,'location');
+  assert.deepEqual(received,[undefined,'SG']);
+});

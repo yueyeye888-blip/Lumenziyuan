@@ -56,6 +56,8 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
       '/__host/commerce.js': 'store.js',
       '/__host/commerce-bridge.js': 'bridge.js',
       '/__host/dashboard.css': 'dashboard.css',
+      '/__host/market-table.js': 'market-table.js',
+      '/__host/market-table.css': 'market-table.css',
     }[path];
     if (typeof asset === 'string') {
       if (req.method !== 'GET') return json(res, 405, { error: '请求方式不支持。' });

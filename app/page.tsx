@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import SupplierTemplateLibrary from "@/components/supplier-template-library";
+import { MarketTableHost, useMarketTable, type MarketTableOptions } from "@/components/market-table-host";
 import { mailStatus } from "@/lib/mail-status.mjs";
 import {
   AlertTriangle,
@@ -406,6 +407,7 @@ export default function Home() {
     | "sync"
     | "security"
   >("store");
+  const marketTableEnabled = useMarketTable();
   const [activeGroup, setActiveGroup] = useState("全部资源");
   const [query, setQuery] = useState("");
   const [favoriteState, setFavoriteState] = useState<{ key: string; items: string[] }>({ key: "", items: [] });
@@ -492,6 +494,7 @@ export default function Home() {
   }, [activeGroup, maxDuration, maxPrice, minDataGb, query, view]);
 
   useEffect(() => {
+    if (marketTableEnabled || (view !== "store" && view !== "favorites")) return;
     let active = true;
     setSyncing(true);
     const timer = window.setTimeout(() => {
@@ -544,6 +547,7 @@ export default function Home() {
     activeGroupConfig.productIds,
     catalogOffset,
     favorites,
+    marketTableEnabled,
     maxDuration,
     maxPrice,
     minDataGb,
@@ -864,6 +868,16 @@ export default function Home() {
 
         {(view === "store" || view === "favorites") && (
           <StoreView
+            marketOptions={marketTableEnabled ? {
+              scope: view === "favorites" ? "favorites" : activeGroupConfig.id,
+              scopeLabel: view === "favorites" ? "收藏的套餐" : activeGroupConfig.name,
+              ids: view === "favorites" ? favorites : activeGroupConfig.id === "all" ? null : activeGroupConfig.productIds,
+              query,
+              favoriteIds: favorites,
+              toggleFavorite,
+              resetQuery: () => setQuery(""),
+              openSecurity: () => setView("security"),
+            } : undefined}
             activeGroup={activeGroup}
             setActiveGroup={setActiveGroup}
             visibleProducts={visibleProducts}
@@ -903,7 +917,7 @@ export default function Home() {
         {view === "security" && <SecurityView overview={overview} />}
       </main>
 
-      {selected.length > 0 && !purchaseOpen && (
+      {!marketTableEnabled && selected.length > 0 && !purchaseOpen && (
         <div className="fixed bottom-5 left-1/2 z-30 flex w-[calc(100%-32px)] max-w-[620px] -translate-x-1/2 items-center gap-4 rounded-2xl bg-[#172a52] px-5 py-4 text-white shadow-2xl lg:left-[calc(50%+122px)]">
           <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/10">
             <ShoppingBag size={17} />
@@ -960,6 +974,7 @@ export default function Home() {
 }
 
 type StoreViewProps = {
+  marketOptions?: MarketTableOptions;
   activeGroup: string;
   setActiveGroup: (value: string) => void;
   visibleProducts: Product[];
@@ -991,6 +1006,7 @@ type StoreViewProps = {
 
 function StoreView(props: StoreViewProps) {
   const {
+    marketOptions,
     activeGroup,
     setActiveGroup,
     visibleProducts,
@@ -1024,17 +1040,17 @@ function StoreView(props: StoreViewProps) {
     <div className="mx-auto max-w-[1480px] px-5 py-6 md:px-8 md:py-8">
       <section className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
         <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-[#6582bd]">
+          {!marketOptions && <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-[#6582bd]">
             {favoriteOnly ? "我的收藏" : "资源商城"}
-          </p>
+          </p>}
           <h1 className="text-2xl font-semibold tracking-tight md:text-[30px]">
-            {favoriteOnly ? "常用套餐" : "选择需要的资源"}
+            {favoriteOnly ? "常用套餐" : marketOptions ? "资源市场" : "选择需要的资源"}
           </h1>
-          <p className="mt-2 text-sm text-slate-500">
+          {!marketOptions && <p className="mt-2 text-sm text-slate-500">
             {isAdmin
               ? "按当前账号显示结算价，付款时 1 U 抵 1 美元。"
               : isCustomer ? "按国家和套餐条件查找，使用账户余额购买。" : "按分组查找套餐，使用账户余额购买。"}
-          </p>
+          </p>}
         </div>
         <div className="flex gap-2">
           {isAdmin && (
@@ -1056,7 +1072,7 @@ function StoreView(props: StoreViewProps) {
         </div>
       </section>
 
-      {isAdmin && (
+      {!marketOptions && isAdmin && (
         <section className="mb-5 grid gap-3 sm:grid-cols-2">
           <Metric
             icon={<Database size={18} />}
@@ -1075,7 +1091,7 @@ function StoreView(props: StoreViewProps) {
         </section>
       )}
 
-      <section className="mb-4 rounded-2xl border border-[#e3e8f0] bg-white p-3.5">
+      {(!marketOptions || (!favoriteOnly && groups.length > 1)) && <section className="mb-4 rounded-2xl border border-[#e3e8f0] bg-white p-3.5">
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setActiveGroup("全部资源")}
@@ -1118,8 +1134,9 @@ function StoreView(props: StoreViewProps) {
             </span>
           )}
         </div>
-      </section>
+      </section>}
 
+      {marketOptions ? <MarketTableHost {...marketOptions} /> : <>
       <section className="mb-5 flex flex-col gap-3 rounded-2xl border border-[#e3e8f0] bg-white p-4 lg:flex-row lg:items-end">
         <div className="flex min-w-0 flex-1 items-center gap-2 text-xs font-semibold text-slate-600">
           <Filter size={14} />
@@ -1222,6 +1239,7 @@ function StoreView(props: StoreViewProps) {
           </button>
         </div>
       )}
+      </>}
     </div>
   );
 }

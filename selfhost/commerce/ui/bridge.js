@@ -7,6 +7,8 @@
   let rechargeOnOpen = new URL(location.href).searchParams.get('action') === 'recharge';
   let pendingRefresh = false;
   let scheduled = false;
+  const marketListeners = new Set();
+  let marketSelection = [];
 
   const link = (label, href, className) => {
     const a = document.createElement('a');
@@ -74,6 +76,7 @@
       snapshot = await response.json();
       displayBalance();
       syncNavigation();
+      for (const listener of marketListeners) listener();
     } catch {
       if (links && !snapshot) links.querySelector('strong').textContent = '暂不可用';
     } finally {
@@ -201,6 +204,63 @@
   }
   // Keep the wallet reachable when session lookup is delayed or performance entries are unavailable.
   window.addEventListener('load', () => setTimeout(startDashboard, 1800), { once: true });
+
+  if (window.LumenMarketTable) {
+    window.lumenMountMarket = (host) => {
+      let options;
+      const market = window.LumenMarketTable.mount(host, {
+        async load(params, signal) {
+          if (options?.ids !== null && options?.ids !== undefined) params.set('ids', options.ids.join(','));
+          const response = await fetch('/api/esim/packages?' + params.toString(), { signal, cache: 'no-store' });
+          if (response.status === 401) {
+            location.assign('/__host/login?returnTo=%2F');
+            throw Error('请重新登录。');
+          }
+          const result = await response.json();
+          if (!response.ok || !result.connected) throw Error(result.error || '供应商目录暂时不可用。');
+          return result;
+        },
+        checkout(items, accepted) {
+          const ids = [...new Set(items.map((item) => item.id))];
+          if (!ids.length) return;
+          window.dispatchEvent(new CustomEvent('lumen:checkout', {
+            detail: {
+              ids,
+              security: () => options?.openSecurity(),
+              accepted() {
+                accepted?.();
+                refreshBalance();
+              },
+            },
+          }));
+        },
+        toggleFavorite: (id) => options?.toggleFavorite(id),
+        resetQuery: () => options?.resetQuery(),
+        selectedChanged: (items) => { marketSelection = items; },
+      });
+      function update() {
+        if (!options) return;
+        const direct = Boolean(snapshot?.canManageAccounts);
+        market.update({
+          scopeKey: JSON.stringify([options.scope, options.ids]),
+          scopeLabel: options.scopeLabel,
+          query: options.query,
+          favoriteIds: options.favoriteIds,
+          selectedItems: marketSelection,
+          favoriteOnly: options.scope === 'favorites',
+          balanceRaw: (direct ? snapshot?.esimSupplierBalanceRaw : snapshot?.availableRaw) ?? null,
+          currency: direct ? 'USD' : 'U',
+          balanceLabel: direct ? '供应商余额' : '钱包可用余额',
+        });
+      }
+      marketListeners.add(update);
+      return {
+        update(next) { options = next; update(); },
+        destroy() { marketListeners.delete(update); market.destroy(); },
+      };
+    };
+    window.dispatchEvent(new Event('lumen:market-ready'));
+  }
 
   function paymentPin(priceRaw) {
     const price = amount.format(priceRaw / 10000);

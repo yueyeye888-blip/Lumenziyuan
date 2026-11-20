@@ -89,6 +89,8 @@ test('new server initializes and serves the complete release using only runtime 
     const home=await get('/');
     assert.equal(home.status,200);
     assert.match(home.body,/\/__host\/dashboard\.css/);
+    assert.match(home.body,/\/__host\/market-table\.js/);
+    assert.equal((await get('/__host/market-table.css')).status,200);
     assert.match((await get('/__host/wallet?embedded=1')).headers['content-security-policy'],/frame-ancestors 'self'/);
     assert.match((await get('/__host/wallet')).headers['content-security-policy'],/frame-ancestors 'none'/);
     assert.match((await get('/__host/shop?embedded=1')).headers['content-security-policy'],/frame-ancestors 'none'/);
