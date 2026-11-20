@@ -34,6 +34,19 @@ const statusText = {
   payment_confirmed: '等待交付',
 };
 const date = (s) => new Date(s).toLocaleString('zh-CN', { hour12: false });
+const page = new URL(location.href);
+const route = page.pathname.split('/').pop();
+const view = route === 'shop' && page.searchParams.get('section') === 'wallet' ? 'wallet' : route;
+const embedded = route === 'wallet' && page.searchParams.get('embedded') === '1';
+const walletPage = route === 'shop' ? '/__host/shop?section=wallet' : '/__host/wallet';
+const postToWorkspace = (type, detail = {}) => {
+  if (embedded && parent !== window) parent.postMessage({ type, ...detail }, location.origin);
+};
+function showModal(dialog, control) {
+  dialog.showModal();
+  postToWorkspace('lumen:wallet-dialog-open');
+  if (control) control.focus({ preventScroll: true });
+}
 function message(text, error = false) {
   const feedback = document.querySelector('dialog[open] .modal-feedback');
   if (feedback) {
@@ -72,7 +85,7 @@ async function api(path, data, headers = {}) {
     body: data ? JSON.stringify(data) : undefined,
   });
   if (r.status === 401) {
-    location.assign('/__host/login');
+    (embedded ? top : window).location.assign('/__host/login');
     throw Error('请重新登录。');
   }
   let j;
@@ -149,18 +162,34 @@ let wallet,
   offset = 0,
   hasNext = false,
   templates = [];
-const view = location.pathname.split('/').pop();
 let historyOrders = [];
+const networkName = (id) => wallet?.networks.find((network) => network.id === id)?.label ?? id;
+function ledgerDate(value) {
+  const t = new Date(value);
+  if (!Number.isFinite(t.valueOf())) return '—';
+  const node = elem('time', t.toLocaleDateString('zh-CN'));
+  node.dateTime = t.toISOString();
+  node.append(elem('small', t.toLocaleTimeString('zh-CN', { hour12: false })));
+  return node;
+}
 function ledgerTable(container, headers, rows, placeholder) {
   container.replaceChildren();
+  container.removeAttribute('aria-busy');
   if (!rows.length) {
-    container.append(elem('p', placeholder, 'empty-state'));
+    const state = elem('div', undefined, 'empty-state');
+    const icon = elem('span', undefined, 'bill-icon');
+    icon.setAttribute('aria-hidden', 'true');
+    state.append(icon, elem('p', placeholder));
+    container.append(state);
     return;
   }
   const table = elem('table', undefined, 'billing-table'),
     head = table.createTHead().insertRow();
-  for (const title of headers) {
+  for (const { title, accessible } of headers.map((heading) =>
+    typeof heading === 'string' ? { title: heading } : heading,
+  )) {
     const cell = elem('th', title);
+    if (accessible) cell.setAttribute('aria-label', accessible);
     cell.scope = 'col';
     head.append(cell);
   }
@@ -179,10 +208,12 @@ function selectHistory(key) {
   }
 }
 for (const tab of ['entries', 'deposits']) $('show-' + tab).onclick = () => selectHistory(tab);
-$('recharge').onclick = () => {
+function openRecharge() {
+  if (!wallet || $('recharge').hidden || document.querySelector('dialog[open]')) return;
   $('deposit-dialog').querySelector('.modal-feedback').hidden = true;
-  $('deposit-dialog').showModal();
-};
+  showModal($('deposit-dialog'), $('deposit-form').elements.amount);
+}
+$('recharge').onclick = openRecharge;
 document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => $(b.dataset.close).close()));
 document.querySelectorAll('[data-amount]').forEach(
   (b) =>
@@ -202,14 +233,17 @@ async function loadWallet() {
   $('workspace').hidden = wallet.role === 'customer';
   $('staff-admin-link').hidden = !wallet.canManageAccounts;
   $('review-link').hidden = wallet.role !== 'admin';
+  const rechargeAllowed = wallet.role !== 'employee';
+  $('shop-balance').textContent = money(wallet.availableRaw);
+  $('shop-recharge').hidden = !rechargeAllowed;
   if (view !== 'wallet') return;
   $('balance').textContent = money(wallet.availableRaw).replace(' U', '');
   $('held').textContent = '订单预留 ' + money(wallet.heldRaw);
   $('held').hidden = !wallet.heldRaw;
-  const rechargeAllowed = wallet.role !== 'employee',
-    select = $('deposit-form').elements.network,
+  const select = $('deposit-form').elements.network,
     previous = select.value;
   $('recharge').hidden = !rechargeAllowed;
+  $('employee-wallet').hidden = rechargeAllowed;
   select.replaceChildren();
   for (const n of wallet.networks) {
     const o = new Option(n.label + (n.enabled ? '' : '（暂不可用）'), n.id);
@@ -225,7 +259,7 @@ async function loadWallet() {
     $('entries'),
     ['时间', '交易说明', '变动金额'],
     wallet.entries.map((e) => [
-      date(e.createdAt),
+      ledgerDate(e.createdAt),
       e.note,
       elem('strong', (e.delta > 0 ? '+' : '') + money(e.delta), e.delta > 0 ? 'positive' : 'numeric'),
     ]),
@@ -238,10 +272,10 @@ async function loadDeposits() {
   $('show-deposits').hidden = wallet.role === 'employee' && !orders.length;
   ledgerTable(
     $('deposits'),
-    ['创建时间', '充值网络', '入账金额', '状态', ''],
+    ['创建时间', '充值网络', '入账金额', '状态', { title: '', accessible: '操作' }],
     orders.map((o) => [
-      date(o.createdAt),
-      o.network,
+      ledgerDate(o.createdAt),
+      networkName(o.network),
       money((o.creditedAmount ?? o.amount) * 10000),
       elem('span', statusText[o.status] || o.status, 'state state-' + o.status),
       button('详情', () => openInvoice(o.id, true)),
@@ -263,49 +297,60 @@ function displayInvoice(o) {
   const n = $('invoice-data');
   n.replaceChildren();
   const s = statusText[o.status] || o.status;
-  n.append(
-    elem('p', o.network + ' · ' + s, 'invoice-status'),
-    elem('strong', (o.status === 'credited' ? '已入账 ' : '入账余额 ') + (o.creditedAmount ?? o.amount) + ' U'),
+  const meta = elem('div', undefined, 'invoice-meta'),
+    summary = elem('div', undefined, 'invoice-summary');
+  meta.append(elem('strong', networkName(o.network)), elem('span', s, 'state state-' + o.status));
+  summary.append(
+    elem('span', o.status === 'credited' ? '已入账' : '预计入账'),
+    elem('strong', (o.creditedAmount ?? o.amount) + ' U'),
   );
+  n.append(meta, summary);
   if (o.status === 'pending' && Date.parse(o.expiresAt) > Date.now()) {
-    n.append(elem('p', '应付 ' + o.expectedAmount + ' USDT', 'amount'));
+    const transfer = elem('div', undefined, 'invoice-transfer'),
+      payment = elem('div', undefined, 'invoice-payment'),
+      address = elem('div', undefined, 'invoice-address');
+    payment.append(elem('span', '请精确支付'), elem('strong', o.expectedAmount + ' USDT', 'amount'));
     const timer = elem('p', '', 'timer');
     timer.id = 'countdown';
-    n.append(timer);
-    countdown();
+    payment.append(timer);
     const img = new Image();
     img.className = 'qr';
     img.alt = '收款地址二维码';
     img.src = '/api/commerce/deposit?id=' + encodeURIComponent(o.id) + '&qr=1';
-    const addr = elem('code', o.address);
-    n.append(
-      img,
-      addr,
-      elem('div'),
-      button('复制地址', async () => {
-        await navigator.clipboard.writeText(o.address);
-        message('收款地址已复制。');
-      }),
+    payment.append(
       button('复制应付金额', async () => {
         await navigator.clipboard.writeText(o.expectedAmount);
         message('应付金额已复制。');
       }),
     );
+    transfer.append(img, payment);
+    address.append(
+      elem('span', '收款地址', 'invoice-label'),
+      elem('code', o.address),
+      button('复制地址', async () => {
+        await navigator.clipboard.writeText(o.address);
+        message('收款地址已复制。');
+      }),
+    );
     n.append(
+      transfer,
+      address,
       elem(
         'p',
         '请在所选网络转入完整应付金额，手续费另付。小数尾数用于识别订单，最多 0.09 USDT，尾数不计入余额。',
         'hint',
       ),
     );
+    countdown();
   } else
     n.append(
       elem(
         'p',
         '订单应付 ' + o.expectedAmount + ' USDT' + (o.paidAmount ? ' · 已检测 ' + o.paidAmount + ' USDT' : ''),
+        'hint',
       ),
     );
-  if (o.txHash) n.append(elem('p', '交易哈希'), elem('code', o.txHash));
+  if (o.txHash) n.append(elem('span', '交易哈希', 'invoice-label'), elem('code', o.txHash));
   n.dataset.state = o.status;
 }
 async function openInvoice(id, show = false) {
@@ -314,7 +359,7 @@ async function openInvoice(id, show = false) {
   displayInvoice(order);
   if (show && !$('invoice').open) {
     $('invoice').querySelector('.modal-feedback').hidden = true;
-    $('invoice').showModal();
+    showModal($('invoice'));
   }
   if (old && old !== order.status) await Promise.all([loadWallet(), loadDeposits()]);
 }
@@ -325,7 +370,7 @@ form('deposit-form', async (f) => {
   displayInvoice(order);
   $('deposit-dialog').close();
   $('invoice').querySelector('.modal-feedback').hidden = true;
-  $('invoice').showModal();
+  showModal($('invoice'));
   selectHistory('deposits');
   await loadDeposits();
 });
@@ -391,14 +436,22 @@ async function catalog() {
     row(
       n,
       p.name,
-      [p.countryName, operators, money(p.priceRaw)].filter(Boolean).join(' · '),
-      button('购买', () => buy(p)),
-    );
+      [p.countryName, operators].filter(Boolean).join(' · '),
+      packageAction(p),
+    ).parentElement.classList.add('product-card');
   }
   empty(n, '没有找到套餐。');
   hasNext = r.hasMore;
   $('prev').disabled = !offset;
   $('next').disabled = !hasNext;
+}
+function packageAction(pack) {
+  const action = elem('div', undefined, 'product-action');
+  action.append(
+    elem('strong', money(pack.priceRaw)),
+    button('购买', () => buy(pack)),
+  );
+  return action;
 }
 form('search', async () => {
   offset = 0;
@@ -600,11 +653,32 @@ async function digest(t) {
       view
     ];
     $('title').textContent = title;
+    $('page-intro').textContent = {
+      shop: '浏览资源、下单和管理购买记录。',
+      wallet: '查看可用余额和账户流水。',
+      security: '设置六位支付密码，用于确认购买和下载。',
+      'payment-review': '查看收款网络和需要人工核对的转账。',
+    }[view];
     document.title = title + ' · Lumen';
-    $(view).hidden = false;
-    for (const a of document.querySelectorAll('header nav a, .profile-menu a')) {
-      if (a.pathname === location.pathname) a.setAttribute('aria-current', 'page');
+    document.body.dataset.view = view;
+    if (embedded) {
+      document.body.classList.add('embedded-wallet');
+      for (const a of document.querySelectorAll('a[href]')) a.target = '_top';
+      new ResizeObserver(() =>
+        postToWorkspace('lumen:wallet-height', {
+          height: Math.ceil(document.querySelector('main').getBoundingClientRect().height),
+        }),
+      ).observe(document.querySelector('main'));
+      window.addEventListener('message', (e) => {
+        if (e.origin === location.origin && e.source === parent && e.data?.type === 'lumen:wallet-open-recharge')
+          openRecharge();
+      });
     }
+    $(view).hidden = false;
+    const walletLink = document.querySelector('.wallet-link');
+    walletLink.href = walletPage;
+    const activeNav = view === 'wallet' ? walletLink : document.querySelector(`header a[href="/__host/${view}"]`);
+    activeNav?.setAttribute('aria-current', 'page');
     await loadWallet();
     if (view === 'shop') await Promise.all([catalog(), loadOrders()]);
     if (view === 'wallet') {
@@ -615,10 +689,17 @@ async function digest(t) {
       }
       const orders = await loadDeposits();
       if (orders.some((o) => o.status === 'pending' || o.status === 'confirming')) selectHistory('deposits');
+      if (page.searchParams.get('action') === 'recharge') {
+        page.searchParams.delete('action');
+        history.replaceState(null, '', page);
+        openRecharge();
+      }
     }
     if (view === 'payment-review') await admin();
   } catch (e) {
     message(e.message, true);
+  } finally {
+    postToWorkspace('lumen:wallet-ready');
   }
 })();
 setInterval(countdown, 1000);

@@ -1,0 +1,163 @@
+.lumen-wallet-nav {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 42px;
+  margin-bottom: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: #dce7ff;
+  font-size: 14px;
+  text-decoration: none;
+}
+.lumen-wallet-nav:hover { background: #ffffff0f; color: #fff; }
+.lumen-wallet-nav[aria-current="page"] { background: #ffffff16; color: #fff; font-weight: 650; }
+aside:has(.lumen-wallet-nav[aria-current="page"]) nav button[class*="bg-white/10"] { background-color: transparent; color: #dce7ff; }
+aside:has(.lumen-wallet-nav[aria-current="page"]) nav button[class*="bg-white/10"]:hover { background-color: #ffffff0f; color: #fff; }
+.lumen-wallet-nav:focus-visible, #lumen-wallet-summary a:focus-visible,
+.lumen-payment-dialog :is(a, button):focus-visible { outline: 2px solid #527bf0; outline-offset: 3px; }
+[data-lumen-legacy-wallet], #lumen-wallet-summary [hidden], #lumen-wallet-panel[hidden] { display: none !important; }
+
+.lumen-wallet-glyph {
+  position: relative;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+}
+.lumen-wallet-glyph::before {
+  content: '';
+  display: block;
+  width: 17px;
+  height: 13px;
+  border: 1.6px solid currentColor;
+  border-radius: 4px;
+}
+.lumen-wallet-glyph::after {
+  content: '';
+  position: absolute;
+  left: calc(50% + 2px);
+  width: 4px;
+  height: 3px;
+  border-block: 1.4px solid currentColor;
+}
+.lumen-wallet-nav .lumen-wallet-glyph { width: 18px; height: 18px; }
+
+#lumen-wallet-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  margin: 22px 32px 0;
+  padding: 16px 19px;
+  background: #fff;
+  border: 1px solid #e1e8f2;
+  border-radius: 16px;
+  box-shadow: 0 2px 4px rgb(22 37 69 / 3%);
+  color: #142441;
+}
+#lumen-wallet-summary > .lumen-wallet-glyph {
+  width: 42px;
+  height: 42px;
+  color: #2457e6;
+  background: #edf2ff;
+  border-radius: 11px;
+}
+.lumen-wallet-summary-label h2 { margin: 0; font-size: 15px; font-weight: 680; line-height: 1.35; }
+.lumen-wallet-summary-label p { margin: 4px 0 0; color: #53647e; font-size: 13px; }
+.lumen-wallet-summary-label strong { color: #142441; font-size: 14px; margin-left: 5px; font-variant-numeric: tabular-nums; }
+.lumen-wallet-summary-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.lumen-wallet-primary, .lumen-wallet-secondary {
+  display: inline-flex;
+  text-align: center;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  border: 1px solid #2457e6;
+  border-radius: 9px;
+  background: #2457e6;
+  color: #fff;
+  text-decoration: none;
+  white-space: nowrap;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 640;
+  cursor: pointer;
+}
+.lumen-wallet-primary:hover { background: #1948ca; border-color: #1948ca; }
+.lumen-wallet-secondary { color: #263c5e; background: #fff; border-color: #dce4ef; }
+.lumen-wallet-secondary:hover { background: #f4f7fb; border-color: #bccbe2; }
+
+main[data-lumen-wallet-view] > :not(header, #lumen-wallet-panel) { display: none !important; }
+main[data-lumen-wallet-view] > header > :has(> input) { visibility: hidden; }
+#lumen-wallet-panel {
+  background: #f4f7fb;
+  padding: 26px 32px 48px;
+  min-height: calc(100vh - 82px);
+  scroll-margin-top: 82px;
+}
+.lumen-wallet-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 auto 18px;
+  max-width: 1260px;
+}
+.lumen-wallet-heading h1 { margin: 0; color: #142441; font-size: clamp(24px, 3vw, 33px); line-height: 1.2; font-weight: 720; }
+.lumen-wallet-heading h1:focus { outline: none; }
+.lumen-wallet-frame { max-width: 1260px; margin: 0 auto; }
+.lumen-wallet-frame iframe { border: 0; display: block; width: 100%; scroll-margin-top: 88px; }
+
+.lumen-payment-dialog {
+  background: #fff;
+  color: #142441;
+  border: 1px solid #e1e8f2;
+  border-radius: 18px;
+  width: min(440px, calc(100vw - 32px));
+  margin: auto;
+  padding: 0;
+  max-height: calc(100% - 32px);
+  box-shadow: 0 24px 80px rgb(15 33 63 / 25%);
+}
+.lumen-payment-dialog::backdrop { background: #12223f94; }
+.lumen-payment-dialog :is(.lumen-payment-header, .lumen-payment-body, footer) { padding: 17px 23px; }
+.lumen-payment-dialog .lumen-payment-header { border-bottom: 1px solid #e6ebf2; }
+.lumen-payment-dialog h2 { margin: 0 0 4px; font-size: 21px; font-weight: 720; }
+.lumen-payment-dialog p { margin: 0; color: #53647e; font-size: 14px; line-height: 1.5; }
+.lumen-payment-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 15px;
+  margin-bottom: 11px;
+  border: 1px solid #dde7fd;
+  border-radius: 10px;
+  background: #f0f5ff;
+  color: #204ab8;
+}
+.lumen-payment-total span { font-size: 14px; font-weight: 620; }
+.lumen-payment-total strong { font-size: 29px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.lumen-payment-total small { font-size: .55em; }
+.lumen-payment-body label { display: grid; gap: 7px; margin: 15px 0 9px; font-size: 14px; font-weight: 640; }
+.lumen-payment-body input {
+  min-height: 44px;
+  border: 1px solid #cdd8ea;
+  border-radius: 9px;
+  width: 100%;
+  padding: 8px 11px;
+  font-size: 16px;
+}
+.lumen-payment-body input:focus { outline: 2px solid #527bf0; outline-offset: 1px; }
+.lumen-payment-links { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: #1e49bd; }
+.lumen-payment-dialog footer { display: flex; justify-content: flex-end; gap: 9px; border-top: 1px solid #e6ebf2; }
+
+@media (max-width: 767px) {
+  #lumen-wallet-summary { margin: 16px 16px 0; padding: 13px; gap: 11px; }
+  #lumen-wallet-panel { padding: 21px 16px 32px; }
+}
+@media (max-width: 475px) {
+  #lumen-wallet-summary { grid-template-columns: auto minmax(0, 1fr); }
+  .lumen-wallet-summary-actions { grid-column: 1 / -1; }
+  .lumen-wallet-summary-actions a { flex: 1; }
+}

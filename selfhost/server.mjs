@@ -50,6 +50,11 @@ void reconcileCommerce();
 const commerceTimer=setInterval(reconcileCommerce,30_000);
 const operations = makeResourceOperations({ root, config, mf, identities, readBody: body, outlook, purchases, wallet });
 const returnPath = value => ['/__host/accounts','/__host/wallet','/__host/shop','/__host/security','/__host/payment-review'].includes(value) ? value : safeReturn(value);
+function customerHome(url) {
+  const params = url.searchParams;
+  if (params.get('section') !== 'wallet') return '/__host/shop';
+  return '/__host/shop?section=wallet' + (params.get('action') === 'recharge' ? '&action=recharge' : '');
+}
 const cookie = '__Host-lumen_session';
 const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
 const redirect = (res, location, headers = {}) => { res.writeHead(303, { location, 'cache-control': 'no-store', ...headers }); res.end(); };
@@ -67,7 +72,7 @@ const server = https.createServer(tls, async (req, res) => {
     const url = new URL(req.url, origin);
     const allowedOrigins = new Set([origin, ...(config.aliasOrigins || [])]);
     if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin && !allowedOrigins.has(req.headers.origin)) return json(res, 403, { error: '请求来源不匹配' });
-    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '1.1.0' });
+    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '1.2.0' });
     // Machine callbacks use the existing order secret, never a browser session.
     if (url.pathname === '/api/address-orders/callback') {
       if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
@@ -115,7 +120,8 @@ const server = https.createServer(tls, async (req, res) => {
         attempt.count++; attempts.set(address, attempt); return login(res, returnPath(fields.get('returnTo')), '账号或密码不正确');
       }
       attempts.delete(address);
-      return redirect(res, user.role === 'customer' ? '/__host/shop' : returnPath(fields.get('returnTo')), { 'set-cookie': identities.issue(user) });
+      const destination = returnPath(fields.get('returnTo'));
+      return redirect(res, user.role === 'customer' ? customerHome(new URL(destination, origin)) : destination, { 'set-cookie': identities.issue(user) });
     }
     const token = (req.headers.cookie || '').split(';').map(s => s.trim()).find(s => s.startsWith(cookie + '='))?.slice(cookie.length + 1);
     if (url.pathname === '/signout-with-chatgpt') { identities.remove(token); return redirect(res, '/__host/login', { 'set-cookie': identities.cookie('') }); }
@@ -131,7 +137,7 @@ const server = https.createServer(tls, async (req, res) => {
     if (session.refreshCookie) res.setHeader('set-cookie', session.refreshCookie);
     if (await commerce.route(req,res,url,session.user)) return;
     if (session.user.role === 'customer') {
-      if (url.pathname === '/' && req.method === 'GET') return redirect(res, '/__host/shop');
+      if (url.pathname === '/' && req.method === 'GET') return redirect(res, customerHome(url));
       if (customerEsimRoute(req.method, url.pathname)) {
         if (await catalog.route(req, res, url, session.user)) return;
         if (await purchases.route(req, res, url, session.user)) return;
@@ -171,13 +177,13 @@ const server = https.createServer(tls, async (req, res) => {
     res.statusCode = response.status;
     for (const [key, value] of response.headers) if (!['transfer-encoding', 'content-encoding', 'content-length'].includes(key)) res.setHeader(key, value);
     res.setHeader('x-content-type-options', 'nosniff');
-    if (req.method === 'GET' && url.pathname === '/' && response.headers.get('content-type')?.includes('text/html')) return res.end(enhanceArchiveHtml(await response.text(), session.user).replace('</head>', '<link rel="stylesheet" href="/__host/esim-checkout.css"><script defer src="/__host/esim-checkout.js"></script><script defer src="/__host/commerce-bridge.js"></script></head>').replace('</body>', '<script defer src="/__host/resource-operations.js"></script></body>'));
+    if (req.method === 'GET' && url.pathname === '/' && response.headers.get('content-type')?.includes('text/html')) return res.end(enhanceArchiveHtml(await response.text(), session.user).replace('</head>', '<link rel="stylesheet" href="/__host/esim-checkout.css"><link rel="stylesheet" href="/__host/dashboard.css"><script defer src="/__host/esim-checkout.js"></script><script defer src="/__host/commerce-bridge.js"></script></head>').replace('</body>', '<script defer src="/__host/resource-operations.js"></script></body>'));
     if (response.body && req.method !== 'HEAD') await pipeline(Readable.fromWeb(response.body), res); else res.end();
   } catch {
     if (!res.headersSent) json(res, 500, { error: '服务暂时不可用，请稍后重试' }); else res.end();
     console.error(JSON.stringify({ event: 'request_failed', path: req.url?.split('?')[0], time: new Date().toISOString() }));
   }
 });
-server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '1.1.0', port: config.port || 8443 })));
+server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '1.2.0', port: config.port || 8443 })));
 const cleanup = setInterval(() => { identities.cleanup(); for (const [key, value] of attempts) if (value.until < Date.now()) attempts.delete(key); }, 60_000);
 for (const event of ['SIGTERM', 'SIGINT']) process.on(event, () => { clearInterval(cleanup); clearInterval(commerceTimer); deposits.stop(); operations.close(); server.close(async () => { await mf.dispose(); process.exit(0); }); });

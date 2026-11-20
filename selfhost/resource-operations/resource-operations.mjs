@@ -84,8 +84,12 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
     if (req.method === 'GET' && url.pathname === '/api/mail-deliveries') {
       const {status,data} = await mailRecords(user); json(res,status,data); return true;
     }
-    if (url.pathname === '/__host/accounts' && req.method === 'GET') {
+    if (['/__host/accounts','/__host/accounts.css'].includes(url.pathname) && req.method === 'GET') {
       if (!canManageAccounts(config,user)) { json(res,403,{error:'仅超级管理员可管理员工与额度。'}); return true; }
+      if (url.pathname.endsWith('.css')) {
+        res.writeHead(200, {'content-type':'text/css; charset=utf-8','cache-control':'private, no-cache','x-content-type-options':'nosniff'});
+        res.end(readFileSync(`${root}/resource-operations/accounts.css`)); return true;
+      }
       res.writeHead(200, {'content-type':'text/html; charset=utf-8','cache-control':'private, no-store','content-security-policy':"default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; frame-ancestors 'none'; form-action 'self'"});
       res.end(readFileSync(`${root}/resource-operations/accounts.html`)); return true;
     }

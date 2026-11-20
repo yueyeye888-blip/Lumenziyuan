@@ -3,103 +3,140 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f4f7fb" />
     <title>员工与额度 · Lumen</title>
-    <link rel="stylesheet" href="/__host/commerce.css" />
+    <link rel="stylesheet" href="/__host/accounts.css" />
     <script src="/__host/resource-operations.js" defer></script>
   </head>
   <body>
-    <header>
-      <div class="wrap bar">
-        <a class="brand" href="/"><b>L</b> Lumen 资源中心</a>
+    <a href="#main" class="skip-link">跳转到账号管理</a>
+    <header class="topbar">
+      <div class="layout topbar-inner">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">L</span>
+          <span>Lumen <span class="brand-context">资源中心</span></span>
+        </a>
         <nav aria-label="主导航">
-          <a href="/__host/shop">资源市场</a><a href="/__host/wallet">我的钱包</a
-          ><a aria-current="page" href="/__host/accounts">员工与额度</a><a href="/">员工工作台</a>
+          <a href="/">首页</a>
+          <a href="/__host/shop">资源市场</a>
+          <a href="/__host/wallet">钱包 / 充值</a>
+          <a aria-current="page" href="/__host/accounts">员工与额度</a>
         </nav>
         <details class="profile-menu">
           <summary>账户</summary>
-          <div>
-            <a href="/__host/security">支付密码</a><a href="/__host/payment-review">收款核对</a
-            ><a href="/signout-with-chatgpt">退出登录</a>
+          <div class="profile-popover">
+            <a href="/__host/security">支付密码</a>
+            <a href="/__host/payment-review">收款核对</a>
+            <a href="/signout-with-chatgpt">退出登录</a>
           </div>
         </details>
       </div>
     </header>
-    <main class="wrap">
-      <div class="heading-row">
+    <main class="layout" id="main">
+      <div class="page-header">
         <div>
           <h1>员工与额度</h1>
-          <p class="hint">创建公司员工账号，按需增加其可用余额。</p>
+          <p>创建员工账号、查询可用余额，并记录每笔额度增加。</p>
         </div>
-        <button type="button" id="new-employee">创建员工</button>
+        <button type="button" class="button primary" id="new-employee">
+          <span class="plus" aria-hidden="true"></span>创建员工
+        </button>
       </div>
-      <p id="account-status" role="status" aria-live="polite"></p>
-      <section class="history">
-        <div class="accounts-toolbar">
-          <div class="history-tabs" aria-label="账号类型">
-            <button type="button" data-role="employee" aria-pressed="true">员工</button
-            ><button type="button" data-role="all" aria-pressed="false">全部账号</button>
+      <div class="summary" aria-label="账号概览">
+        <div class="metric">
+          <span class="metric-label">员工账号</span>
+          <strong id="employee-count">—</strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">平台注册用户</span>
+          <strong id="customer-count">—</strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">员工可用余额合计</span>
+          <div><strong id="employee-balance">—</strong><span class="unit">U</span></div>
+        </div>
+      </div>
+      <p id="account-status" class="status" role="status" aria-live="polite" hidden></p>
+      <section class="directory" aria-labelledby="directory-title">
+        <div class="directory-heading">
+          <h2 id="directory-title">账号目录</h2>
+          <span class="row-count" id="account-count"></span>
+        </div>
+        <div class="account-controls">
+          <div class="filter" aria-label="账号类型">
+            <button type="button" data-role="employee" aria-pressed="true">员工</button>
+            <button type="button" data-role="customer" aria-pressed="false">平台用户</button>
+            <button type="button" data-role="all" aria-pressed="false">全部账号</button>
           </div>
-          <label class="search-label" aria-label="搜索账号"
-            ><input id="account-search" type="search" placeholder="搜索姓名或邮箱" aria-label="搜索姓名或邮箱"
-          /></label>
+          <label class="search-label">
+            <span class="search-icon" aria-hidden="true"></span>
+            <input id="account-search" type="search" placeholder="搜索姓名或邮箱" aria-label="搜索姓名或邮箱" />
+          </label>
         </div>
-        <div class="table-wrap">
-          <table class="billing-table accounts-table">
-            <thead>
-              <tr>
-                <th scope="col">账号</th>
-                <th scope="col">身份</th>
-                <th scope="col">可用余额</th>
-                <th scope="col">操作</th>
-              </tr>
-            </thead>
-            <tbody id="account-list"></tbody>
-          </table>
-          <p id="empty-accounts" class="empty-state">正在读取账号…</p>
-        </div>
+        <table class="accounts-table" role="table" aria-labelledby="directory-title">
+          <thead role="rowgroup">
+            <tr role="row">
+              <th scope="col" role="columnheader">账号</th>
+              <th scope="col" role="columnheader">身份</th>
+              <th scope="col" role="columnheader" class="align-end">可用余额</th>
+              <th scope="col" role="columnheader" class="align-end">操作</th>
+            </tr>
+          </thead>
+          <tbody id="account-list" role="rowgroup"></tbody>
+        </table>
+        <p id="empty-accounts" class="empty-state" role="status">正在读取账号…</p>
       </section>
-      <dialog id="employee-dialog" aria-labelledby="employee-title">
+      <dialog id="employee-dialog" aria-labelledby="employee-title" aria-describedby="employee-description">
         <div class="dialog-head">
-          <h2 id="employee-title">创建员工</h2>
-          <button type="button" data-close="employee-dialog" aria-label="关闭">×</button>
+          <div>
+            <h2 id="employee-title">创建员工</h2>
+            <p id="employee-description">员工使用下方邮箱和初始密码登录。</p>
+          </div>
+          <button type="button" class="close" data-close="employee-dialog" aria-label="关闭">×</button>
         </div>
         <form id="create-employee" autocomplete="off">
-          <label>员工姓名<input name="name" maxlength="80" required /></label
-          ><label>登录邮箱<input name="email" type="email" maxlength="254" required /></label
-          ><label
-            >初始密码<input
-              name="password"
-              type="password"
-              minlength="12"
-              maxlength="128"
-              required
-              autocomplete="new-password"
-            /><small>至少 12 位</small></label
-          >
-          <p class="modal-feedback" role="status" hidden></p>
-          <button>创建员工账号</button>
+          <label for="employee-name">员工姓名</label>
+          <input id="employee-name" name="name" maxlength="80" required />
+          <label for="employee-email">登录邮箱</label>
+          <input id="employee-email" name="email" type="email" maxlength="254" required />
+          <label for="employee-password">初始密码</label>
+          <input id="employee-password" name="password" type="password" minlength="12" maxlength="128"
+                 required autocomplete="new-password" aria-describedby="employee-password-hint" />
+          <p id="employee-password-hint" class="field-help">至少 12 位字符。</p>
+          <p class="modal-feedback" role="alert" hidden></p>
+          <div class="dialog-actions">
+            <button type="button" class="button neutral" data-close="employee-dialog">取消</button>
+            <button class="button primary" type="submit">创建员工账号</button>
+          </div>
         </form>
       </dialog>
-      <dialog id="credit-dialog" aria-labelledby="credit-title">
+      <dialog id="credit-dialog" aria-labelledby="credit-title" aria-describedby="credit-description">
         <div class="dialog-head">
-          <h2 id="credit-title">增加额度</h2>
-          <button type="button" data-close="credit-dialog" aria-label="关闭">×</button>
+          <div>
+            <h2 id="credit-title">增加额度</h2>
+            <p id="credit-description">金额将记入该账号的可用余额。</p>
+          </div>
+          <button type="button" class="close" data-close="credit-dialog" aria-label="关闭">×</button>
         </div>
         <p class="credit-target" id="credit-account"></p>
         <form id="credit-form">
-          <label
-            >增加金额（U）<input
-              type="number"
-              min="0.0001"
-              max="99999999.9999"
-              step="0.0001"
-              name="amount"
-              inputmode="decimal"
-              required /></label
-          ><label>入账备注<input name="note" value="账户额度" maxlength="180" required /></label>
-          <p id="credit-result" class="hint"></p>
-          <p class="modal-feedback" role="status" hidden></p>
-          <button>确认增加额度</button>
+          <label for="credit-amount">增加金额<span class="visually-hidden">（U）</span></label>
+          <div class="amount-field">
+            <input id="credit-amount" type="number" min="0.0001" max="99999999.9999" step="0.0001"
+                   name="amount" inputmode="decimal" placeholder="0.00" required />
+            <span aria-hidden="true">U</span>
+          </div>
+          <label for="credit-note">入账备注</label>
+          <input id="credit-note" name="note" value="账户额度" maxlength="180" required />
+          <div class="credit-preview" role="status">
+            <div><span>当前余额</span><strong id="credit-before"></strong></div>
+            <div><span>预计入账后</span><strong id="credit-result">—</strong></div>
+          </div>
+          <p class="modal-feedback" role="alert" hidden></p>
+          <div class="dialog-actions">
+            <button type="button" class="button neutral" data-close="credit-dialog">取消</button>
+            <button class="button primary" type="submit">确认增加额度</button>
+          </div>
         </form>
       </dialog>
     </main>

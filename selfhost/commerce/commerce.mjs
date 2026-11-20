@@ -55,16 +55,19 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
       '/__host/commerce.css': 'style.css',
       '/__host/commerce.js': 'store.js',
       '/__host/commerce-bridge.js': 'bridge.js',
+      '/__host/dashboard.css': 'dashboard.css',
     }[path];
     if (typeof asset === 'string') {
       if (req.method !== 'GET') return json(res, 405, { error: '请求方式不支持。' });
+      const frameAncestors =
+        path === '/__host/wallet' && url.searchParams.get('embedded') === '1' ? "'self'" : "'none'";
       res.writeHead(200, {
         'content-type': types[asset.split('.').pop()] + '; charset=utf-8',
         'cache-control': 'private, no-store',
         'x-content-type-options': 'nosniff',
         'referrer-policy': 'same-origin',
         'content-security-policy':
-          "default-src 'self'; img-src 'self' data: https:; script-src 'self'; style-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'",
+          `default-src 'self'; img-src 'self' data: https:; script-src 'self'; style-src 'self'; frame-ancestors ${frameAncestors}; object-src 'none'; base-uri 'none'; form-action 'self'`,
       });
       res.end(readFileSync(new URL(asset, assetDirectory)));
       return true;

@@ -10,10 +10,15 @@
   <body>
     <header>
       <div class="wrap bar">
-        <a class="brand" href="/"><b>L</b> Lumen 资源中心</a>
+        <a class="brand" href="/"
+          ><b aria-hidden="true">L</b> <span>Lumen<small>资源中心</small></span></a
+        >
         <nav aria-label="主导航">
-          <a href="/__host/shop">资源市场</a><a href="/__host/wallet">我的钱包</a
-          ><a href="/__host/accounts" id="staff-admin-link" hidden>员工与额度</a>
+          <a href="/__host/shop">资源市场</a>
+          <a href="/__host/wallet" class="wallet-link"
+            ><span class="ui-icon wallet-icon" aria-hidden="true"></span>钱包 / 充值</a
+          >
+          <a href="/__host/accounts" id="staff-admin-link" hidden>员工与额度</a>
           <a href="/" id="workspace" hidden>员工工作台</a>
         </nav>
         <details class="profile-menu">
@@ -28,24 +33,38 @@
       </div>
     </header>
     <main class="wrap">
-      <h1 id="title">我的钱包</h1>
+      <div class="page-heading">
+        <h1 id="title">我的钱包</h1>
+        <p id="page-intro"></p>
+      </div>
       <p id="notice" role="status" aria-live="polite"></p>
       <div id="wallet" hidden>
         <section class="wallet-balance" aria-label="可用余额">
-          <div>
-            <h2>可用余额</h2>
+          <div class="wallet-copy">
+            <h2><span class="ui-icon wallet-icon" aria-hidden="true"></span>可用余额</h2>
             <div class="balance-number"><strong id="balance">—</strong><span>U</span></div>
             <p class="held" id="held" hidden></p>
           </div>
-          <button id="recharge" type="button" hidden>充值 USDT</button>
+          <div class="wallet-actions">
+            <p class="employee-wallet" id="employee-wallet" hidden>员工余额由管理员分配</p>
+            <button id="recharge" type="button" hidden><span aria-hidden="true">+</span> 充值 USDT</button>
+            <a class="wallet-settings" href="/__host/security">管理支付密码 <span aria-hidden="true">↗</span></a>
+          </div>
         </section>
         <section class="history">
-          <div class="history-tabs" aria-label="选择账单类型">
-            <button type="button" id="show-entries" aria-pressed="true">余额明细</button>
-            <button type="button" id="show-deposits" aria-pressed="false" hidden>充值记录</button>
+          <div class="bill-heading">
+            <h2>账单</h2>
+            <div class="history-tabs" role="group" aria-label="选择账单类型">
+              <button type="button" id="show-entries" aria-controls="entries" aria-pressed="true">余额明细</button>
+              <button type="button" id="show-deposits" aria-controls="deposits" aria-pressed="false" hidden>
+                充值记录
+              </button>
+            </div>
           </div>
-          <div class="table-wrap" id="entries"></div>
-          <div class="table-wrap" id="deposits" hidden></div>
+          <div class="table-wrap" id="entries" aria-busy="true"><p class="bill-loading">正在载入余额明细…</p></div>
+          <div class="table-wrap" id="deposits" aria-busy="true" hidden>
+            <p class="bill-loading">正在载入充值记录…</p>
+          </div>
         </section>
         <dialog id="deposit-dialog" aria-labelledby="deposit-title">
           <div class="dialog-head">
@@ -53,7 +72,16 @@
             <button type="button" data-close="deposit-dialog" aria-label="关闭">×</button>
           </div>
           <form id="deposit-form">
-            <label>入账金额（U）<input name="amount" type="number" step="1" min="5" value="50" required /></label>
+            <label
+              >入账金额（U）<input
+                name="amount"
+                type="number"
+                inputmode="numeric"
+                step="1"
+                min="5"
+                value="50"
+                required
+            /></label>
             <div class="presets" aria-label="常用充值金额">
               <button type="button" data-amount="5">5 U</button><button type="button" data-amount="20">20 U</button
               ><button type="button" data-amount="50">50 U</button
@@ -112,15 +140,31 @@
         </section>
       </div>
       <div id="shop" hidden>
+        <section class="shop-wallet" aria-label="钱包 / 充值">
+          <span class="shop-wallet-icon" aria-hidden="true"><span class="ui-icon wallet-icon"></span></span>
+          <div class="shop-wallet-balance">
+            <h2>钱包 / 充值</h2>
+            <strong id="shop-balance">—</strong>
+          </div>
+          <div class="shop-wallet-actions">
+            <a class="action-link action-outline" href="/__host/shop?section=wallet">查看账单</a>
+            <a class="action-link" id="shop-recharge" href="/__host/shop?section=wallet&amp;action=recharge" hidden
+              >充值 USDT</a
+            >
+          </div>
+        </section>
         <nav class="tabs">
           <a href="#catalog">eSIM 套餐</a><a href="#address">地址生成</a><a href="#orders">我的订单</a>
         </nav>
         <section id="catalog">
-          <h2>eSIM 流量套餐</h2>
-          <form class="inline" id="search">
-            <label>搜索套餐、国家或运营商<input name="q" type="search" placeholder="例如 Singapore" /></label
-            ><button>搜索</button>
-          </form>
+          <div class="shop-section-heading">
+            <h2>eSIM 流量套餐</h2>
+            <form class="inline" id="search">
+              <label class="sr-only" for="package-search">搜索套餐、国家或运营商</label>
+              <input name="q" id="package-search" type="search" placeholder="搜索套餐、国家或运营商" />
+              <button>搜索</button>
+            </form>
+          </div>
           <div id="products"></div>
           <div class="buttons">
             <button id="prev" class="secondary">上一页</button><button id="next" class="secondary">下一页</button>
@@ -128,7 +172,10 @@
         </section>
         <section id="address">
           <div class="address-price">
-            <h2>地址证明生成</h2>
+            <div>
+              <h2>地址证明生成</h2>
+              <p class="hint">按所选模板生成，完成后发送到你填写的邮箱。</p>
+            </div>
             <strong>10 <small>U / 份</small></strong>
           </div>
           <details id="address-details">
@@ -149,15 +196,20 @@
                   maxlength="6"
                   required
               /></label>
-              <p class="hint">付款后开始生成。若订单处理失败，10 U 将退回账户余额。</p>
-              <a href="/__host/security">设置支付密码</a>
-              <button>支付 10 U 并生成</button>
+              <div class="address-payment">
+                <p class="hint">付款后开始生成。若订单处理失败，10 U 将退回账户余额。</p>
+                <div class="buttons">
+                  <button>支付 10 U 并生成</button><a href="/__host/security">设置支付密码</a>
+                </div>
+              </div>
             </form>
           </details>
         </section>
         <section id="orders">
-          <h2>我的订单</h2>
-          <button id="refresh-orders" class="secondary">刷新订单</button>
+          <div class="shop-section-heading">
+            <h2>我的订单</h2>
+            <button id="refresh-orders" class="secondary">刷新订单</button>
+          </div>
           <div id="order-list"></div>
           <div id="order-details"></div>
         </section>

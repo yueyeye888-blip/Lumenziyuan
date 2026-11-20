@@ -86,7 +86,12 @@ test('new server initializes and serves the complete release using only runtime 
     assert.equal(login.status,303);
     const session=login.headers['set-cookie'][0].split(';')[0];
     const get=path=>call(port,path,{cookie:session});
-    assert.equal((await get('/')).status,200);
+    const home=await get('/');
+    assert.equal(home.status,200);
+    assert.match(home.body,/\/__host\/dashboard\.css/);
+    assert.match((await get('/__host/wallet?embedded=1')).headers['content-security-policy'],/frame-ancestors 'self'/);
+    assert.match((await get('/__host/wallet')).headers['content-security-policy'],/frame-ancestors 'none'/);
+    assert.match((await get('/__host/shop?embedded=1')).headers['content-security-policy'],/frame-ancestors 'none'/);
     const user=JSON.parse((await get('/api/session')).body).viewer;
     assert.ok(user.isAdmin && user.email===adminEmail);
     const routes = [
@@ -118,6 +123,8 @@ test('new server initializes and serves the complete release using only runtime 
     const buyerCookie=customerLogin.headers['set-cookie'][0].split(';')[0];
     const buyer=path=>call(port,path,{cookie:buyerCookie});
     assert.equal((await buyer('/')).headers.location,'/__host/shop');
+    assert.equal((await buyer('/?section=wallet&action=recharge')).headers.location,'/__host/shop?section=wallet&action=recharge');
+    assert.match((await buyer('/__host/shop?section=wallet')).body,/id="shop-balance"/);
     for(const path of ['/__host/shop','/__host/wallet','/__host/commerce.js','/__host/commerce.css']) assert.equal((await buyer(path)).status,200,path);
     const wallet=JSON.parse((await buyer('/api/commerce/wallet')).body);
     assert.equal(wallet.role,'customer');assert.equal(wallet.availableRaw,0);

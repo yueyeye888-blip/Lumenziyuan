@@ -15,7 +15,18 @@
     let rows=[],visible=[],selected=null;
     const payment = node('dialog',undefined,'archive-payment');
     payment.setAttribute('aria-labelledby','download-payment-title');
-    payment.innerHTML='<form><h2 id="download-payment-title">下载原文件</h2><p class="download-name"></p><div class="download-price"><span>本次下载</span><strong>5 U</strong></div><p>确认后从账户余额支付。下载中断可在 30 分钟内继续。</p><label>六位支付密码<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="off"></label><a href="/__host/security">设置支付密码</a><p role="alert" class="download-error"></p><div class="actions"><button type="button" class="button secondary">取消</button><button type="submit" class="button">支付 5 U 并下载</button></div></form>';
+    payment.innerHTML = `
+      <form>
+        <header class="payment-header"><div><h2 id="download-payment-title">确认购买原文件</h2><p class="download-name"></p></div><button type="button" class="close" aria-label="关闭确认窗口">${icon('close')}</button></header>
+        <div class="payment-body">
+          <div class="download-price"><span>应付金额</span><strong>5 <small>U</small></strong></div>
+          <p>从账户余额扣款。下载中断后可在 30 分钟内继续。</p>
+          <label>六位支付密码<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="off"></label>
+          <a href="/__host/security">设置支付密码</a>
+          <p role="alert" class="download-error"></p>
+        </div>
+        <footer class="payment-actions"><button type="button" class="button secondary">取消</button><button type="submit" class="button">支付 5 U 并下载</button></footer>
+      </form>`;
     root.querySelector('main').append(payment);
     const payForm=payment.querySelector('form');
     let payingFor, requestId, busy=false;
@@ -26,7 +37,7 @@
       payment.querySelector('.download-error').textContent='';
       payment.showModal();payForm.elements.pin.focus();
     }
-    payment.querySelector('button[type="button"]').onclick=()=>payment.close();
+    for (const button of payment.querySelectorAll('button[type="button"]')) button.onclick=()=>payment.close();
     payment.addEventListener('cancel',event=>{if(busy)event.preventDefault()});
     payForm.onsubmit=async event=>{
       event.preventDefault();if(busy)return;busy=true;

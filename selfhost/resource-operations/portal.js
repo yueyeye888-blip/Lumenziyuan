@@ -15,85 +15,180 @@
     const select = (id) => document.getElementById(id);
     const list = select('account-list');
     const status = select('account-status');
+    const search = select('account-search');
+    const empty = select('empty-accounts');
+    const toolbar = select('new-employee');
     const credit = select('credit-form');
-    const amount = (raw) => (raw / 10000).toLocaleString('en-US', {maximumFractionDigits:4}) + ' U';
-    let accounts = [], role = 'employee', target;
+    const summary = new Intl.NumberFormat('en-US');
+    const units = new Intl.NumberFormat('en-US', {maximumFractionDigits: 4});
+    const amount = (raw) => units.format(raw / 10000);
+    const money = (raw) => amount(raw) + ' U';
+    const roles = {admin: '管理员', employee: '员工', customer: '平台用户'};
+    let accounts, role = 'employee', target;
+
+    function notice(message, failure = false) {
+      status.textContent = message;
+      status.classList.toggle('problem', failure);
+      status.hidden = !message;
+    }
+
     function show(dialog) {
       dialog.querySelector('.modal-feedback').hidden = true;
       dialog.showModal();
       dialog.querySelector('input').focus();
     }
+
     function openCredit(account) {
       target = account;
       credit.reset();
-      select('credit-account').textContent = (account.name || account.email) + ' · ' + account.email;
-      select('credit-result').textContent = '当前可用余额 ' + amount(account.availableRaw);
+      select('credit-account').replaceChildren(element('strong', account.name || account.email), element('small', account.email));
+      select('credit-before').textContent = money(account.availableRaw);
+      select('credit-result').textContent = '—';
       show(select('credit-dialog'));
     }
+
     function render() {
-      const query = select('account-search').value.trim().toLowerCase();
-      const matches = accounts.filter(a => (role==='all' || a.role === role) &&
-        (a.email+' '+a.name).toLowerCase().includes(query));
+      if (!accounts) return;
+      const query = search.value.trim().toLowerCase();
+      const matches = accounts.filter(account => (role === 'all' || account.role === role) &&
+        (account.email + ' ' + account.name).toLowerCase().includes(query));
       list.replaceChildren();
-      for (const a of matches) {
-        const row = list.insertRow(), identity = row.insertCell();
-        identity.append(element('strong',a.name || a.email), element('small',a.email));
-        row.insertCell().textContent = ({admin:'管理员',employee:'员工',customer:'平台用户'})[a.role] + (a.enabled ? '' : '（停用）');
-        row.insertCell().textContent = amount(a.availableRaw);
+      for (const account of matches) {
+        const row = list.insertRow();
+        row.setAttribute('role', 'row');
+        const name = account.name || account.email;
+        const identity = element('div', '');
+        identity.className = 'identity';
+        const avatar = element('span', Array.from(name)[0].toUpperCase());
+        avatar.className = 'initial';
+        avatar.setAttribute('aria-hidden', 'true');
+        const identityText = element('div', '');
+        identityText.append(element('strong', name), element('small', account.email));
+        identity.append(avatar, identityText);
+        row.insertCell().append(identity);
+
+        const badge = element('span', roles[account.role]);
+        badge.className = 'role role-' + account.role;
+        row.insertCell().append(badge);
+
+        const balance = row.insertCell();
+        const currency = element('span', 'U');
+        currency.className = 'unit';
+        balance.className = 'balance';
+        balance.append(amount(account.availableRaw), ' ', currency);
+
         const action = row.insertCell();
-        if (a.enabled) {
-          const b=element('button','增加额度');b.type='button';b.className='secondary';b.onclick=()=>openCredit(a);action.append(b);
+        action.className = 'account-action';
+        if (account.enabled) {
+          const button = element('button', '增加额度');
+          button.type = 'button';
+          button.className = 'button neutral';
+          button.setAttribute('aria-label', '增加额度 · ' + account.email);
+          button.onclick = () => openCredit(account);
+          action.append(button);
+        } else {
+          const stopped = element('span', '已停用');
+          stopped.className = 'unavailable';
+          action.append(stopped);
         }
       }
-      const empty = select('empty-accounts'); empty.hidden = !!matches.length;
-      empty.textContent = query ? '没有匹配的账号。' : role==='employee'?'暂无员工，点击「创建员工」即可添加。':'暂无账号。';
+      select('account-count').textContent = summary.format(matches.length);
+      empty.hidden = Boolean(matches.length);
+      empty.textContent = query ? '未找到匹配的账号。' : {
+        all: '暂无账号。',
+        employee: '暂无员工。点击「创建员工」添加第一个账号。',
+        customer: '暂无通过邮箱注册的平台用户。',
+      }[role];
     }
+
     async function refresh() {
-      accounts=(await requestJson('/api/operations/accounts')).accounts;
+      accounts = (await requestJson('/api/operations/accounts')).accounts;
+      const employees = accounts.filter(account => account.role === 'employee');
+      select('employee-count').textContent = summary.format(employees.length);
+      select('customer-count').textContent = summary.format(accounts.filter(account => account.role === 'customer').length);
+      select('employee-balance').textContent = amount(employees.reduce((total, account) => total + account.availableRaw, 0));
       render();
     }
+
     function selectTab(next) {
-      role=next;
-      for (const button of document.querySelectorAll('[data-role]')) button.setAttribute('aria-pressed',String(button.dataset.role===next));
+      role = next;
+      for (const button of document.querySelectorAll('[data-role]')) {
+        button.setAttribute('aria-pressed', String(button.dataset.role === next));
+      }
       render();
     }
-    for (const button of document.querySelectorAll('[data-role]')) button.onclick=()=>selectTab(button.dataset.role);
-    select('account-search').oninput=render;
-    select('new-employee').onclick=()=>show(select('employee-dialog'));
-    document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>select(b.dataset.close).close());
-    function onSubmit(formEl,action) {
-      formEl.addEventListener('submit',async(event)=>{
-        event.preventDefault();const b=formEl.querySelector('button'), dialog=formEl.closest('dialog');
-        const feedback=formEl.querySelector('.modal-feedback');
-        b.disabled=true;dialog.querySelector('[data-close]').disabled=true;
-        try {await action(Object.fromEntries(new FormData(formEl)));dialog.close(); formEl.reset(); await refresh();}
-        catch(e){if(dialog.open){feedback.hidden=false;feedback.textContent=e.message;feedback.classList.add('problem')}else status.textContent=e.message;}
-        finally {b.disabled=false;dialog.querySelector('[data-close]').disabled=false;}
+
+    for (const button of document.querySelectorAll('[data-role]')) button.onclick = () => selectTab(button.dataset.role);
+    search.oninput = render;
+    toolbar.onclick = () => show(select('employee-dialog'));
+    document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => select(button.dataset.close).close());
+
+    function onSubmit(formEl, pending, action) {
+      const dialog = formEl.closest('dialog');
+      const submit = formEl.querySelector('button[type="submit"]');
+      const closeButtons = dialog.querySelectorAll('[data-close]');
+      const feedback = formEl.querySelector('.modal-feedback');
+      const label = submit.textContent;
+      formEl.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const fields = Object.fromEntries(new FormData(formEl));
+        feedback.hidden = true;
+        submit.disabled = true;
+        submit.textContent = pending;
+        closeButtons.forEach(button => button.disabled = true);
+        try {
+          const message = await action(fields);
+          dialog.close();
+          formEl.reset();
+          notice(message);
+          await refresh();
+        } catch (error) {
+          if (dialog.open) {
+            feedback.textContent = error.message;
+            feedback.hidden = false;
+          } else {
+            notice(status.textContent + ' 目录刷新失败，请刷新页面。', true);
+          }
+        } finally {
+          submit.disabled = false;
+          submit.textContent = label;
+          closeButtons.forEach(button => button.disabled = false);
+        }
       });
-      formEl.closest('dialog').addEventListener('cancel',e=>{if(formEl.querySelector('button').disabled)e.preventDefault()});
+      dialog.addEventListener('cancel', event => {
+        if (submit.disabled) event.preventDefault();
+      });
     }
-    const post=(url,data)=>requestJson(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
-    onSubmit(form,async fields=>{
-      await post('/api/operations/accounts',fields);
-      select('account-search').value='';selectTab('employee');status.textContent='已创建员工账号 '+fields.email+'。';
+
+    const post = (url, data) => requestJson(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+    onSubmit(form, '正在创建…', async fields => {
+      await post('/api/operations/accounts', fields);
+      search.value = '';
+      selectTab('employee');
+      return '已创建员工账号 ' + fields.email + '。';
     });
-    credit.elements.amount.oninput=()=>{
-      const delta=Math.round(Number(credit.elements.amount.value)*10000);
-      select('credit-result').textContent=credit.elements.amount.validity.valid && delta>0
-        ? '增加前 '+amount(target.availableRaw)+' · 预计增加后 '+amount(target.availableRaw+delta)
-        :'当前可用余额 '+amount(target.availableRaw);
+    credit.elements.amount.oninput = () => {
+      const delta = Math.round(Number(credit.elements.amount.value) * 10000);
+      select('credit-result').textContent = credit.elements.amount.validity.valid && delta > 0
+        ? money(target.availableRaw + delta) : '—';
     };
-    onSubmit(credit,async fields=>{
-      const key='lumen:admin-credit:'+JSON.stringify([target.email,fields.amount,fields.note]);
-      const requestId=sessionStorage.getItem(key)||crypto.randomUUID();sessionStorage.setItem(key,requestId);
-      const data=await post('/api/commerce/admin/credit',{...fields,email:target.email,requestId});
-      sessionStorage.removeItem(key);status.textContent=data.email+' 的可用余额已更新为 '+amount(data.availableRaw)+'。';
+    onSubmit(credit, '正在入账…', async fields => {
+      const key = 'lumen:admin-credit:' + JSON.stringify([target.email, fields.amount, fields.note]);
+      const requestId = sessionStorage.getItem(key) || crypto.randomUUID();
+      sessionStorage.setItem(key, requestId);
+      const data = await post('/api/commerce/admin/credit', {...fields, email: target.email, requestId});
+      sessionStorage.removeItem(key);
+      return data.email + ' 的可用余额已更新为 ' + money(data.availableRaw) + '。';
     });
-    refresh().then(()=>{
-      const email=new URL(location.href).searchParams.get('credit');
-      const account=email && accounts.find(a=>a.enabled && a.email.toLowerCase()===email.toLowerCase());
-      if(account) openCredit(account);
-    }).catch(e=>{select('empty-accounts').textContent=e.message});
+
+    refresh().then(() => {
+      const email = new URL(location.href).searchParams.get('credit');
+      const account = email && accounts.find(entry => entry.enabled && entry.email.toLowerCase() === email.toLowerCase());
+      if (account) {
+        selectTab(account.role === 'admin' ? 'all' : account.role);
+        openCredit(account);
+      }
+    }).catch(error => { empty.textContent = error.message; });
     return;
   }
 
