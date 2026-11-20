@@ -178,6 +178,10 @@ type CatalogResponse = {
 type WarehouseBatch = {
   id: string;
   batchId: string;
+  retailUnitRaw?: number | null;
+  priceLabel?: string;
+  rateNote?: string;
+  requestId?: string;
   supplier: string;
   productName: string;
   category: string;
@@ -347,7 +351,7 @@ function mapCatalogItems(items: CatalogResponse["items"]): Product[] {
 
 function formatMoney(amount?: number, currency = "USD") {
   if (typeof amount !== "number") return "同步中";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(
+  return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 4 }).format(
     amount,
   );
 }
@@ -679,9 +683,9 @@ export default function Home() {
               />
               <NavItem
                 icon={<WalletCards size={18} />}
-                label="额度明细"
+                label="账户余额"
                 active={view === "quota"}
-                onClick={() => setView("quota")}
+                onClick={() => window.location.assign("/__host/wallet")}
               />
               <NavItem
                 icon={<Users size={18} />}
@@ -721,7 +725,7 @@ export default function Home() {
             </div>
             <p className="text-lg font-semibold">API + 库存仓库</p>
             <p className="mt-1.5 text-[11px] leading-5 text-blue-200">
-              API 平台按额度购买；无 API 平台库存认领不限额度
+              资源购买和已定价库存使用账户余额
             </p>
           </div>
         )}
@@ -2437,7 +2441,7 @@ function AdminView({ overview }: { overview: PlatformOverview }) {
             平台钱包、员工额度与购买记录
           </h1>
           <p className="mt-2 text-sm text-slate-500">
-            每个供应平台独立同步余额，再从对应平台钱包向员工分配额度。
+            查看供应商余额与采购记录，或给用户的站内账户添加余额。
           </p>
         </div>
         <button className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#1d3b72] px-5 text-sm font-medium text-white">
@@ -2492,25 +2496,15 @@ function AdminView({ overview }: { overview: PlatformOverview }) {
                   </span>
                 </div>
                 <p className="mt-1 text-xs text-slate-500">
-                  官方账户余额决定该平台可分配额度上限
+                  供应商主账号余额用于向 eSIMAccess 结算采购成本。
                 </p>
               </div>
             </div>
             <button className="text-xs font-medium text-[#4168ab]">刷新</button>
           </div>
-          <div className="mt-7 grid grid-cols-3 gap-4">
-            <div>
-              <p className="text-[11px] text-slate-400">账户余额</p>
-              <p className="mt-1 text-xl font-semibold">{balance}</p>
-            </div>
-            <div>
-              <p className="text-[11px] text-slate-400">已分配</p>
-              <p className="mt-1 text-xl font-semibold">待配置</p>
-            </div>
-            <div>
-              <p className="text-[11px] text-slate-400">可继续分配</p>
-              <p className="mt-1 text-xl font-semibold">待配置</p>
-            </div>
+          <div className="mt-7">
+            <p className="text-[11px] text-slate-400">供应商账户余额</p>
+            <p className="mt-1 text-xl font-semibold">{balance}</p>
           </div>
         </div>
         <div className="rounded-[20px] border border-[#e5e9f0] bg-white p-6">
@@ -2601,17 +2595,17 @@ function AdminView({ overview }: { overview: PlatformOverview }) {
       <section className="mb-7 rounded-[20px] border border-[#e5e9f0] bg-white p-5 shadow-[0_4px_24px_rgba(28,48,82,.04)] md:p-7">
         <div className="mb-5 flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold">员工分平台额度</h2>
+            <h2 className="text-lg font-semibold">账户余额管理</h2>
             <p className="mt-1 text-sm text-slate-500">
-              同一员工可分别拥有 eSIMAccess、号码平台等不同钱包额度
+              按账号邮箱添加 U 余额，充值及订单支出都记入该账号的账本。
             </p>
           </div>
-          <button className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-medium text-slate-600">
-            分配额度
+          <button onClick={() => window.location.assign("/__host/wallet#admin")} className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-medium text-slate-600">
+            给账号加款
           </button>
         </div>
         <div className="rounded-xl border border-dashed border-slate-200 py-10 text-center text-sm text-slate-500">
-          额度账本尚未初始化。接入员工账号数据库后，可在这里按平台分配额度。
+          管理员加款时填写账号邮箱、金额和备注。
         </div>
       </section>
 
@@ -3737,6 +3731,7 @@ function WarehouseView() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [claimBatch, setClaimBatch] = useState<WarehouseBatch | null>(null);
+  const [stockPin, setStockPin] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [recipientEmail, setRecipientEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -3775,7 +3770,8 @@ function WarehouseView() {
   }, []);
 
   const openClaim = (batch: WarehouseBatch) => {
-    setClaimBatch(batch);
+    setClaimBatch({ ...batch, requestId: crypto.randomUUID() });
+    setStockPin("");
     setQuantity(1);
     setRecipientEmail(data?.viewer.email || "");
     setError("");
@@ -3786,26 +3782,22 @@ function WarehouseView() {
     if (!claimBatch) return;
     setSubmitting(true);
     setError("");
-    const response = await fetch("/api/warehouse/claim", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        batchId: claimBatch.batchId,
-        quantity,
-        recipientEmail,
-      }),
-    });
-    const result = (await response.json()) as {
-      error?: string;
-      claimed?: number;
-      emailStatus?: string;
-      emailError?: string;
-    };
-    setSubmitting(false);
-    if (!response.ok) {
-      setError(result.error || "认领失败");
-      return;
-    }
+    const fingerprint = [data?.viewer.email, claimBatch.batchId, quantity, recipientEmail.trim().toLowerCase(), claimBatch.retailUnitRaw].join("|");
+    let key = "", requestId = claimBatch.requestId;
+    try {
+      key = "lumen-stock-" + Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(fingerprint))), b => b.toString(16).padStart(2, "0")).join("");
+      requestId = sessionStorage.getItem(key) || requestId;
+      if (requestId) sessionStorage.setItem(key, requestId);
+    } catch {}
+    let result: { error?: string; claimed?: number; emailStatus?: string; emailError?: string };
+    try {
+      const response = await fetch("/api/warehouse/claim", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ batchId: claimBatch.batchId, quantity, recipientEmail, requestId, quotedUnitRaw: claimBatch.retailUnitRaw, pin: stockPin }) });
+      result = await response.json();
+      if (!response.ok) { setError(result.error || "认领失败"); return; }
+      try { if (key) sessionStorage.removeItem(key); } catch {}
+    } catch { setError("请求中断，使用同一数量和邮箱重试以核对原订单。"); return; }
+    finally { setSubmitting(false); }
     setClaimBatch(null);
     setNotice(
       ["accepted", "sent"].includes(result.emailStatus || "")
@@ -3882,7 +3874,7 @@ function WarehouseView() {
             库存仓库与资源认领
           </h1>
           <p className="mt-2 text-sm text-slate-500">
-            管理员提前采购并加密入库；业务员可单个或批量认领，不占用任何平台额度。
+            管理员可提前入库，员工按需单个或批量认领。
           </p>
         </div>
         <div
@@ -3902,7 +3894,7 @@ function WarehouseView() {
             iconClass="bg-[#edf2ff] text-[#4266b2]"
             label="可认领库存"
             value={data ? `${data.stats.available} 项` : "加载中"}
-            note="无 API 平台库存不设置额度限制"
+            note="只统计尚可领取的资源"
           />
           <Metric
             icon={<PackageCheck size={19} />}
@@ -3956,7 +3948,7 @@ function WarehouseView() {
               <div>
                 <h2 className="text-lg font-semibold">可认领资源</h2>
                 <p className="mt-1 text-xs text-slate-500">
-                  无需支付密码、无需审批、无需额度；认领时必须指定接收邮箱。
+                  已定价资源按页面售价扣除账户余额；认领时请填写接收邮箱。
                 </p>
               </div>
               <button
@@ -3995,19 +3987,14 @@ function WarehouseView() {
                     <div className="mt-5 flex items-end justify-between border-t border-slate-100 pt-4">
                       <div>
                         <p className="text-sm font-semibold text-[#294d88]">
-                          {batch.unitPrice === null
-                            ? "不限额度"
-                            : formatMoney(
-                                batch.unitPrice / 100,
-                                batch.currency,
-                              )}
+                          {batch.priceLabel || (batch.unitPrice === null ? "免费" : formatMoney(batch.unitPrice / 100, batch.currency))}
                         </p>
                         <p className="mt-1 text-[10px] text-slate-400">
-                          认领不扣内部额度
+                          {batch.rateNote || "库存认领"}
                         </p>
                       </div>
                       <button
-                        onClick={() => openClaim(batch)}
+                        disabled={batch.retailUnitRaw === null} onClick={() => openClaim(batch)}
                         className="rounded-xl bg-[#1d3b72] px-4 py-2.5 text-xs font-semibold text-white"
                       >
                         {batch.available > 1 ? "批量认领" : "立即认领"}
@@ -4186,14 +4173,14 @@ function WarehouseView() {
                   </label>
                   <label>
                     <span className="mb-2 block text-xs font-medium">
-                      采购单价（仅记录）
+                      采购单价（按原价两倍销售）
                     </span>
                     <input
                       value={unitPrice}
                       onChange={(event) =>
                         setUnitPrice(event.target.value.replace(/[^\d.]/g, ""))
                       }
-                      placeholder="不填则显示不限额度"
+                      placeholder="留空可免费认领"
                       className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm"
                     />
                   </label>
@@ -4266,7 +4253,7 @@ function WarehouseView() {
                   {claimBatch.productName}
                 </h2>
                 <p className="mt-2 text-xs text-slate-500">
-                  当前库存 {claimBatch.available} 项，本次认领不占用额度。
+                  当前库存 {claimBatch.available} 项 · 本次合计 {((claimBatch.retailUnitRaw || 0) * quantity / 10000).toFixed(4).replace(/\.?0+$/, "") || "0"} U
                 </p>
               </div>
               <button
@@ -4319,9 +4306,13 @@ function WarehouseView() {
                   认领后资源会保存在“我的认领”，并投递到此邮箱。请确认邮箱准确无误。
                 </span>
               </label>
+              {Boolean(claimBatch.retailUnitRaw) && <label className="block">六位支付密码
+                <input type="password" required value={stockPin} onChange={e => setStockPin(e.target.value)}
+                  inputMode="numeric" autoComplete="off" pattern="[0-9]{6}" maxLength={6}
+                  className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-4" /></label>}
               <div className="rounded-xl border border-[#dfe8fa] bg-[#f4f7fd] p-4 text-xs leading-5 text-[#425b88]">
                 <ShieldCheck className="mr-2 inline" size={15} />
-                无需支付密码和额度；提交后库存将立即归属当前账号，无法被其他人再次认领。
+                系统按实际认领数量结算，领取的资源保存在本账号并发送至所填邮箱。
               </div>
             </div>
             <div className="flex justify-end gap-3 border-t border-slate-100 p-5">

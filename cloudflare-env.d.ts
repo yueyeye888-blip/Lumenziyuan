@@ -8,6 +8,7 @@ declare namespace Cloudflare {
     TELEGRAM_BOT_TOKEN?: string;
     TELEGRAM_CHAT_ID?: string;
     SETTINGS_ENCRYPTION_KEY?: string;
+    SELFHOST_WALLET_REQUIRED?: string;
     RESEND_API_KEY?: string;
     DELIVERY_EMAIL_FROM?: string;
     OPENAI_API_KEY?: string;

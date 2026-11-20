@@ -3,6 +3,7 @@ import { webcrypto } from 'node:crypto';
 import { trustedHeaders } from './auth.mjs';
 import { makeEsimWorkbook } from './esim-export.mjs';
 import { openEsimMailLog, normalizeRecipient } from './esim-mail-log.mjs';
+import { retailPrice } from './esim-commerce.mjs';
 import { maxWorkbookBytes } from '../outlook-mail.mjs';
 
 const day = 86_400_000;
@@ -29,7 +30,7 @@ const statusForMail = {
 export function makeResourceOperations({ root, config, mf, identities, readBody, outlook, purchases }) {
   const bindings = config.bindings || {};
   const admins = new Set(String(bindings.RESOURCE_ADMIN_EMAILS || '').split(',').map(email => email.trim().toLowerCase()).filter(Boolean));
-  const admin = user => admins.has(user.email.toLowerCase());
+  const admin = user => user.role !== 'customer' && admins.has(user.email.toLowerCase());
   const json = (res, code, value) => { res.writeHead(code, { 'content-type':'application/json; charset=utf-8','cache-control':'private, no-store' }); res.end(JSON.stringify(value)); };
   const dispatch = (pathname, user) => mf.dispatchFetch(new URL(pathname,config.origin).href, { headers: trustedHeaders({}, user) });
   const progress = { everyMinutes: 30, lastCheckedAt: null, matched: 0, notified: 0, error: null, nextCheckAt: new Date(Date.now() + pollInterval).toISOString() };
@@ -59,6 +60,17 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
   }
 
   async function route(req, res, url, user) {
+    if (req.method === 'GET' && url.pathname === '/api/esim/topups') {
+      const reply = await dispatch(url.pathname + url.search,user);
+      const data = await reply.json();
+      if (reply.ok && Array.isArray(data.items)) {
+        data.items = data.items.map(item => {
+          const priceRaw = retailPrice(item.priceRaw);
+          return {...item,priceRaw,price:priceRaw/10_000};
+        });
+      }
+      json(res,reply.status,data); return true;
+    }
     if (req.method === 'GET' && url.pathname === '/api/esim/overview') {
       await purchases.sync(user).catch(() => {});
       const {status,data} = await overview(user);
@@ -82,7 +94,7 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
     if (url.pathname === '/api/operations/accounts') {
       if (!admin(user)) { json(res,403,{error:'仅管理员可管理账号'}); return true; }
       if (req.method === 'GET') {
-        json(res,200,{accounts:identities.list().map(account => ({email:account.email,name:account.name,enabled:account.enabled !== false,admin:admin(account)}))}); return true;
+        json(res,200,{accounts:identities.list().map(account => ({email:account.email,name:account.name,enabled:account.enabled !== false,admin:admin(account),role:admin(account) ? 'admin' : account.role === 'customer' ? 'customer' : 'employee'}))}); return true;
       }
       if (req.method === 'POST' && req.headers.origin === config.origin && /^application\/json\b/.test(req.headers['content-type'] || '')) {
         let fields;

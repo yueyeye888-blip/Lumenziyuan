@@ -1,7 +1,7 @@
 (() => {
   const money = raw => new Intl.NumberFormat('en-US', {
     style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:4,
-  }).format(raw / 10_000);
+  }).format(raw / 10_000).replace('$','') + ' U';
   const time = new Intl.DateTimeFormat('zh-CN',{dateStyle:'short',timeStyle:'short',timeZone:'Asia/Singapore'});
   const statuses = { allocating:'供应商已接单，正在分配 eSIM',ready:'已交付',rejected:'供应商未接单',uncertain:'等待确认供应商是否接单' };
   let activeDialog;
@@ -147,7 +147,7 @@
     const frame = dialog(selection.ids.length === 1 ? '购买套餐' : '合并购买');
     if (!frame) return;
     const { modal,content,feedback } = frame;
-    feedback.textContent = '正在读取 eSIMAccess 实时价格…';
+    feedback.textContent = '正在获取套餐售价…';
     let quote;
     try { quote = await request('purchase-quote',{ids:selection.ids}); }
     catch(error) { feedback.textContent=error.message; return; }
@@ -309,59 +309,6 @@
       finally { reload.disabled = more.disabled = false; }
     }
     await list();
-  }
-
-  async function quota() {
-    const frame = dialog('分配 eSIMAccess 额度');
-    if (!frame) return;
-    const {modal,content,feedback} = frame;
-    feedback.textContent='正在读取员工额度与供应商余额…';
-    let result;
-    try { result = await request('purchase-quota'); }
-    catch(error) { feedback.textContent=error.message; return; }
-    if (!modal.open) return;
-    const info=node('div',undefined,'lumen-buy-summary');
-    info.append(node('p','供应商余额 '+money(result.balanceRaw)),node('p','已分配 '+money(result.allocatedRaw)),node('strong','还可分配 '+money(result.unallocatedRaw)));
-    content.prepend(info);
-    if (!result.accounts.length) {
-      feedback.textContent='暂无可分配额度的员工。';
-      const link=node('a','前往账户管理'); link.href='/__host/accounts'; content.append(link);
-      return;
-    }
-    const form=node('form');
-    const staffLabel=node('label','员工账号','lumen-buy-pin');
-    const staff=node('select');
-    for (const account of result.accounts) {
-      const option=node('option',(account.name ? account.name+' · ' : '')+account.email);
-      option.value=account.email;
-      staff.append(option);
-    }
-    const quotaLabel=node('label','调整后的可用额度（美元）','lumen-buy-pin');
-    const target=node('input');
-    Object.assign(target,{type:'text',inputMode:'decimal',pattern:'[0-9]{1,8}([.][0-9]{1,4})?',required:true});
-    const fill=() => { target.value=String(result.accounts.find(account => account.email === staff.value).availableRaw/10_000); };
-    staff.addEventListener('change',fill);
-    fill();
-    const actions=node('div',undefined,'lumen-buy-actions');
-    const save=button('保存额度',undefined,true); save.type='submit'; actions.append(save);
-    staffLabel.append(staff); quotaLabel.append(target); form.append(staffLabel,quotaLabel,feedback,actions);
-    feedback.textContent='';
-    content.append(form);
-    form.addEventListener('submit',async event => {
-      event.preventDefault();
-      if (save.disabled || !form.reportValidity()) return;
-      const account=result.accounts.find(account => account.email===staff.value);
-      staff.disabled=target.disabled=save.disabled=true;
-      frame.busy(true);
-      try {
-        await request('purchase-quota',{email:account.email,amount:target.value,expectedRaw:account.availableRaw});
-        modal.close();
-        refresh();
-        if (activeDialog === modal) activeDialog=undefined;
-        void quota();
-      } catch(error) { feedback.textContent=error.message; }
-      finally { frame.busy(false); staff.disabled=target.disabled=save.disabled=false; }
-    });
   }
 
   const renewalStatuses = {
@@ -552,5 +499,5 @@
 
   window.addEventListener('lumen:checkout',event => void checkout(event.detail));
   window.addEventListener('lumen:esim-orders',() => void orderHistory());
-  window.addEventListener('lumen:esim-quota',() => void quota());
+  window.addEventListener('lumen:esim-quota',() => { window.location.assign('/__host/wallet'); });
 })();

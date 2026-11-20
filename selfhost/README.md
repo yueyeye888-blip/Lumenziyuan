@@ -2,6 +2,14 @@
 
 这个目录包含 2026-11-20 的正式站运行代码和已经构建好的前端及 Worker。运行时用 Node.js 22.13 以上的 22.x 版本、Miniflare 和本地 SQLite/D1。新服务器可直接使用 `dist/`，无需重新构建仓库根目录的 Sites 应用。
 
+## 公开注册与交易
+
+访客从 `/__host/register` 通过邮箱验证码注册，新客户进入资源市场。管理员和员工继续使用原有账号。请先授权发件邮箱，让正式域名的注册页能发出验证码。员工工作台保留原有专属分组和内部归档权限。
+
+管理员可在 `/__host/wallet` 的“为账号添加余额”按邮箱加款，备注会显示在余额流水中。购买和续费检查六位支付密码。可用余额按 1 U 抵 1 USD 计算，eSIM 套餐、续费和有价格的库存按基价的两倍结算。地址订单在提交时预留 10 U，交付完成后扣款，失败释放。原有未定价的员工库存可继续免费认领。
+
+启用收款时，将本机专用的 `config/usdt.json` 放到受限配置目录。每笔充值本金至少 5 U，用户精确支付页面显示的 USDT 金额，钱包只增加订单本金。三条主网配置、确认规则、异常入账及故障恢复见 [收款设置](commerce/USDT.md)。
+
 ## Windows 新装
 
 1. 安装 Node.js 22 LTS。下载本仓库或克隆到准备长期运行的目录。
@@ -22,7 +30,8 @@
 | 私有备份内容 | 用途 |
 | --- | --- |
 | `config/runtime.json` | 站点域名、供应商及服务绑定、加密密钥。调整新机上的 `origin`、`aliasOrigins`、`port` 和本地路径，保留原 `SETTINGS_ENCRYPTION_KEY` 以便解密旧配置。 |
-| `config/accounts.json` 与 `data/site-sessions.sqlite` | 管理员和员工账号。恢复后，旧域名的会话取决于浏览器现有 Cookie 与原会话状态。 |
+| `config/usdt.json` 与 `data/commerce.sqlite` | 三链收款地址、链上扫描位置、充值金额关联、余额流水和订单预留。迁机时和 D1 一起停写备份，确保 WAL 侧文件完整。 |
+| `config/accounts.json` 与 `data/site-sessions.sqlite` | 管理员、员工、公开注册用户及登录会话。恢复后，旧域名的会话取决于浏览器现有 Cookie 与原会话状态。 |
 | `data/d1/` 与其 SQLite 侧文件 | 分组、额度、资源归属、购买、续费、通知设置与业务记录。 |
 | 其他 `data/` 中的状态文件 | Outlook OAuth 授权、邮件记录及去重状态。 |
 | `private-template-archive/` | 有授权的员工模板、归档目录与预览文件。私下复制到新机同一相对位置。 |
@@ -34,7 +43,7 @@
 
 以 `deploy/runtime.example.json` 为结构参考。修改实际文件 `config/runtime.json` 时保留安装脚本生成的加密密钥，修改后重启站点。
 
-- **eSIMAccess** 在 `bindings.ESIM_ACCESS_CODE` 与 `bindings.ESIM_SECRET_KEY` 填入你的 API 凭据。管理员可管理员工额度。购买、续费会按供应商返回的套餐和账户余额验证，提交前校验支付密码。
+- **eSIMAccess** 在 `bindings.ESIM_ACCESS_CODE` 与 `bindings.ESIM_SECRET_KEY` 填入你的 API 凭据。管理员可在“我的钱包”为账号添加余额。购买和续费在供应商成本、本站零售价及用户可用余额核对通过后提交。
 - **Outlook** 配置 `outlook.mailbox` 和支持个人 Microsoft 账号、允许公共客户端设备流的 `outlook.clientId`。运行 `node authorize-site-outlook.mjs start`，在 Microsoft 页面完成授权，再运行 `node authorize-site-outlook.mjs poll`。确认授权邮箱后重启服务。迁移过旧授权文件的实例可沿用其中的邮箱和 client ID。验证发件状态后再发送实际附件。
 - **Telegram** 以管理员身份在站点内配置机器人、接收方并发送测试消息。恢复旧数据库的实例可沿用已保存的设置和原加密密钥。
 - **地址翻译** 可选设置 `bindings.OPENAI_API_KEY` 和 `bindings.ADDRESS_TRANSLATION_MODEL`。

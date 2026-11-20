@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, symlinkSync, rmSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, symlinkSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,7 @@ import { request } from 'node:https';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
+import { openIdentityStore } from '../resource-operations/session-store.mjs';
 
 const source = fileURLToPath(new URL('..',import.meta.url));
 function call(port,path,{ cookie,body,method='GET',headers={} } = {}) {
@@ -52,6 +53,14 @@ test('new server initializes and serves the complete release using only runtime 
     assert.equal(initialized.status,0,initialized.error?.message || initialized.stderr);
     const reinit=spawnSync(process.execPath,['initialize.mjs'],{cwd:root,encoding:'utf8',timeout:4000});
     assert.notEqual(reinit.status,0);
+    const customerEmail='public-buyer@example.invalid', customerPassword=randomBytes(24).toString('base64url');
+    let code;
+    const identity=openIdentityStore(root,{config:JSON.parse(readFileSync(join(root,'config/runtime.json'),'utf8')),
+      outlook:{sendRegistrationCode:async(_email,value)=>{code=value;}}});
+    try {
+      await identity.registration.requestCode(customerEmail,'127.0.0.1');
+      assert.equal(identity.registration.register({email:customerEmail,code,password:customerPassword}).status,201);
+    } finally {identity.close();}
     child=spawn(process.execPath,['server.mjs'],{cwd:root,env:{...process.env,LUMEN_LISTEN_HOST:'127.0.0.1'},stdio:['ignore','pipe','pipe']});
     child.stdout.on('data',chunk=>{logs+=String(chunk);});
     child.stderr.on('data',chunk=>{logs+=String(chunk);});
@@ -63,6 +72,8 @@ test('new server initializes and serves the complete release using only runtime 
     }
     assert.equal(health?.status,200,logs);
     assert.equal(JSON.parse(health.body).ok,true);
+    // Chromium sends Origin: null on form POST if the login page suppresses all referrers.
+    assert.equal((await call(port,'/__host/login')).headers['referrer-policy'],'same-origin');
     assert.equal((await call(port,'/api/esim/renewals')).status,401);
     assert.equal((await call(port,'/api/address-orders/callback',{method:'POST',body:'{}'})).status,401);
     const login=await call(port,'/__host/login',{method:'POST',
@@ -88,6 +99,31 @@ test('new server initializes and serves the complete release using only runtime 
     }
     assert.match((await get('/__host/esim-checkout.js')).body,/lumen:renewal-history/);
     assert.equal((await get('/__host/accounts')).status,200);
+    assert.match((await call(port,'/__host/login')).body,/href="\/__host\/register"/);
+    assert.match((await call(port,'/__host/register')).body,/发送验证码/);
+    const formHeaders={'Content-Type':'application/x-www-form-urlencoded',Origin:origin};
+    const unconfigured=await call(port,'/__host/register/code',{method:'POST',headers:formHeaders,body:'email=new%40example.invalid'});
+    assert.equal(unconfigured.status,503);
+    assert.match(unconfigured.body,/暂时无法发送/);
+    assert.equal((await call(port,'/__host/register/code',{method:'POST',headers:{...formHeaders,Origin:'https://another.example'},body:'email=x'})).status,403);
+    const customerLogin=await call(port,'/__host/login',{method:'POST',headers:formHeaders,
+      body:new URLSearchParams({email:customerEmail,password:customerPassword,returnTo:'/__host/accounts'}).toString()});
+    assert.equal(customerLogin.status,303);
+    assert.equal(customerLogin.headers.location,'/__host/shop');
+    const buyerCookie=customerLogin.headers['set-cookie'][0].split(';')[0];
+    const buyer=path=>call(port,path,{cookie:buyerCookie});
+    assert.equal((await buyer('/')).headers.location,'/__host/shop');
+    for(const path of ['/__host/shop','/__host/wallet','/__host/commerce.js','/__host/commerce.css']) assert.equal((await buyer(path)).status,200,path);
+    const wallet=JSON.parse((await buyer('/api/commerce/wallet')).body);
+    assert.equal(wallet.role,'customer');assert.equal(wallet.availableRaw,0);
+    assert.equal(wallet.email,customerEmail);
+    for(const path of ['/api/operations/accounts','/api/groups','/__host/template-archive/catalog','/__host/accounts','/api/warehouse','/api/esim/overview','/api/commerce/admin/deposits'])
+      assert.equal((await buyer(path)).status,403,path);
+    const accounts=JSON.parse((await get('/api/operations/accounts')).body);
+    assert.equal(accounts.accounts.find(a=>a.email===customerEmail)?.role,'customer');
+    assert.equal(JSON.parse((await buyer('/api/commerce/deposits')).body).orders.length,0);
+    assert.deepEqual(JSON.parse((await buyer('/api/esim/purchases')).body).orders,[]);
+
   } finally {
     if(child?.exitCode===null) {
       child.kill('SIGTERM');

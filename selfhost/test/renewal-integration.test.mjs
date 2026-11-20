@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
+import { testWallet } from './wallet-fixture.mjs';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createEsimPurchases } from '../resource-operations/esim-purchases.mjs';
@@ -57,7 +58,8 @@ test('manual top-up honors ownership, live base match, PIN, quota and the suppli
     }
     throw Error('Unexpected vendor call');
   });
-  const api=createEsimPurchases({config:{origin,bindings:auth},mf,supplier,identities:{list:()=>[admin,staff,outsider]},readBody:async req=>req.payload});
+  const funds=testWallet({staff:150_000});
+  const api=createEsimPurchases({wallet:funds,config:{origin,bindings:auth},mf,supplier,identities:{list:()=>[admin,staff,outsider]},readBody:async req=>req.payload});
   async function request(route,user,fields,overrideOrigin=origin) {
     const {pathname}=new URL(route,origin);
     const req={method:fields?'POST':'GET',headers:{origin:overrideOrigin,'content-type':'application/json'},payload:JSON.stringify(fields)};
@@ -77,7 +79,7 @@ test('manual top-up honors ownership, live base match, PIN, quota and the suppli
     const quotePath='/api/esim/renewal-quote';
     const renewPath='/api/esim/renewals';
     assert.equal((await request('/api/settings/security',staff,{newPin:'654321'})).status,200);
-    assert.equal((await request('/api/esim/purchase-quota',admin,{email:staff.email,amount:'15',expectedRaw:0})).status,200);
+    assert.equal((await request('/api/esim/purchase-quota',admin,{email:staff.email,amount:'15',expectedRaw:0})).status,410);
     assert.equal((await request(quotePath,outsider,{ids:['CARD_A']})).status,403);
     const {data:quote}=await request(quotePath,staff,{ids:['CARD_A','CARD_B','CARD_C']});
     assert.deepEqual(quote.cards.map(card=>card.options.map(offer=>offer.code)),[['TOPUP_AA01'],['TOPUP_BB01'],[]]);
@@ -99,9 +101,10 @@ test('manual top-up honors ownership, live base match, PIN, quota and the suppli
     const success=await settled(quote.id);
     assert.deepEqual(success.map(row=>row.status),['succeeded','succeeded']);
     assert.deepEqual(success.map(row=>row.receipt),['RECEIPT-1','RECEIPT-2']);
+    assert.deepEqual(success.map(row=>row.amountRaw),[30800,44000]);
     assert.equal(success[0].expiredTime,'2099-01-01T00:00:00.000Z');
     assert.deepEqual(calls.map(row=>[row.esimTranNo,row.packageCode,row.amount]),[['CARD_A','TOPUP_AA01',15400],['CARD_B','TOPUP_BB01',22000]]);
-    assert.equal((await api.summary(staff)).availableRaw,112600);
+    assert.equal((await api.summary(staff)).availableRaw,75200);
     assert.equal((await request(renewPath+'?id='+quote.id,outsider)).status,404);
     assert.equal((await request(renewPath,admin)).data.records.length,2);
     const rejectedQuote=(await request(quotePath,staff,{ids:['CARD_A']})).data;
@@ -109,16 +112,18 @@ test('manual top-up honors ownership, live base match, PIN, quota and the suppli
     assert.equal((await request(renewPath,staff,{id:rejectedQuote.id,pin:'654321',code:'NOT_QUOTED'})).status,400);
     await request(renewPath,staff,{id:rejectedQuote.id,pin:'654321',code:'TOPUP_AA01'});
     assert.equal((await settled(rejectedQuote.id))[0].status,'rejected');
-    assert.equal((await api.summary(staff)).availableRaw,112600);
+    assert.equal((await api.summary(staff)).availableRaw,75200);
     const unknownQuote=(await request(quotePath,staff,{ids:['CARD_A']})).data;
     fail='timeout';
     await request(renewPath,staff,{id:unknownQuote.id,pin:'654321',code:'TOPUP_AA01'});
     assert.equal((await settled(unknownQuote.id))[0].status,'uncertain');
-    assert.equal((await api.summary(staff)).availableRaw,97200);
+    assert.equal((await api.summary(staff)).availableRaw,44400);
     const again=(await request(quotePath,staff,{ids:['CARD_A']})).data;
     assert.match(again.cards[0].reason,/待核对/);
     assert.equal(calls.length,4);
     const {results:ledger}=await db.prepare("SELECT amount FROM quota_transactions WHERE kind='续费' ORDER BY amount").all();
-    assert.deepEqual(ledger.map(row=>row.amount),[-22000,-15400]);
-  } finally { await mf.dispose(); }
+    assert.equal(ledger.length,0);
+    assert.equal(funds.count('spent'),2);
+    assert.equal(funds.count('held'),1);
+  } finally { await mf.dispose(); funds.close(); }
 });

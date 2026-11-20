@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { getChatGPTUser } from "@/app/chatgpt-auth";
 import { getDb } from "@/db";
@@ -25,6 +26,11 @@ export async function POST(request: Request) {
     return Response.json({ error: "请求来源不匹配" }, { status: 403, headers });
   }
 
+  const billed = env.SELFHOST_WALLET_REQUIRED === "1" ? request.headers.get("x-lumen-billed-address-order") : null;
+  if (env.SELFHOST_WALLET_REQUIRED === "1" && !/^ADDR-[0-9]{8}-[A-Z0-9]{8}$/.test(billed || "")) {
+    return Response.json({ error: "请从购买页面提交" }, { status: 402, headers });
+  }
+
   let profile;
   let template: { id: string; name: string };
   try {
@@ -42,7 +48,7 @@ export async function POST(request: Request) {
   const db = getDb();
   const row: typeof addressOrders.$inferInsert = {
     id: crypto.randomUUID(),
-    requestNo: requestNumber(),
+    requestNo: billed ?? requestNumber(),
     userId: user.userId,
     userEmail: user.email.toLowerCase(),
     userName: user.displayName,

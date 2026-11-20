@@ -3,6 +3,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { once } from 'node:events';
 import http from 'node:http';
+import { testWallet } from './wallet-fixture.mjs';
 import { test } from 'node:test';
 import { createEsimPurchases } from '../resource-operations/esim-purchases.mjs';
 import { createEsimSupplier } from '../resource-operations/esim-supplier.mjs';
@@ -11,10 +12,11 @@ const origin = 'https://test.example';
 const admin = { id:'admin', email:'admin@test.example' };
 const staff = { id:'staff', email:'staff@test.example' };
 const stranger = { id:'other', email:'other@test.example' };
-const price = 12_345;
+const cost = 12_345;
+const price = 2 * cost;
 const cart = (id='LH-'+randomUUID(),items=[{id:'SG_Fixed',priceRaw:price,count:3}]) => ({id,items,pin:'864209'});
 const packageList = [
-  {slug:'SG_Fixed',packageCode:'SG123',name:'Singapore Fixed',price,currencyCode:'USD',dataType:1,duration:7},
+  {slug:'SG_Fixed',packageCode:'SG123',name:'Singapore Fixed',price:cost,currencyCode:'USD',dataType:1,duration:7},
   {slug:'SG_Daily',packageCode:'SG124',name:'Singapore Daily',price:16_774,currencyCode:'USD',dataType:2,duration:1},
   {slug:'FR_1',packageCode:'FR123',name:'France 1GB',price:13_000,currencyCode:'USD',dataType:1,duration:7},
 ];
@@ -60,7 +62,9 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     }
     throw Error('Unexpected supplier request');
   });
-  const api = createEsimPurchases({
+  const customer = {...stranger,id:'public',email:'customer@test.example',role:'customer'};
+  const funds = testWallet({staff:200_000,admin:200_000});
+  const api = createEsimPurchases({wallet:funds,
     config:{origin,bindings},mf,identities:{list:() => [admin,staff,stranger]},supplier,
     readBody:async req => {
       const chunks=[];
@@ -68,7 +72,7 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
       return Buffer.concat(chunks);
     },
   });
-  const identities = Object.fromEntries([admin,staff,stranger].map(user => [user.id,user]));
+  const identities = Object.fromEntries([admin,staff,stranger,customer].map(user => [user.id,user]));
   const server = http.createServer(async (req,res) => {
     if (!await api.route(req,res,new URL(req.url,origin),identities[req.headers['x-test-user']])) res.writeHead(404).end();
   });
@@ -100,9 +104,11 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
       assert.equal((await request('/api/settings/security',user,{newPin:'864209'})).status,200);
     }
     assert.equal((await request(quotaPath,staff)).status,403);
-    assert.equal((await request(quotaPath,admin,{email:staff.email,amount:'20',expectedRaw:0})).status,402);
-    assert.equal((await request(quotaPath,admin,{email:staff.email,amount:'10',expectedRaw:0})).data.availableRaw,100_000);
-    assert.equal((await request(quotePath,staff,{ids:['SG_Fixed']})).data.availableRaw,100_000);
+    assert.equal((await request(quotaPath,admin,{email:staff.email,amount:'20',expectedRaw:0})).status,410);
+    assert.equal((await request(quotePath,staff,{ids:['SG_Fixed']})).data.availableRaw,200_000);
+    const publicQuote = await request(quotePath,customer,{ids:['FR_1']});
+    assert.equal(publicQuote.data.lines[0].priceRaw,26_000);
+    assert.equal(publicQuote.data.availableRaw,0);
     assert.equal((await request(quotePath,staff,{ids:['FR_1']})).status,403);
     assert.equal((await request(orderPath,staff,cart(), 'https://other.example')).status,403);
     assert.equal((await request(orderPath,staff,cart(undefined,[{id:'SG_Fixed',priceRaw:price,count:31}]))).status,400);
@@ -115,12 +121,12 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     assert.equal(data.order.orderNo,'ORDER1');
     assert.equal(retry.data.order.orderNo,'ORDER1');
     assert.equal(submitted.length,1);
-    assert.deepEqual(submitted[0],{transactionId:first.id,amount:37_035,packageInfoList:[{packageCode:'SG_Fixed',count:3,price}]});
+    assert.deepEqual(submitted[0],{transactionId:first.id,amount:37_035,packageInfoList:[{packageCode:'SG_Fixed',count:3,price:cost}]});
     assert.equal((await request(orderPath+'?id='+first.id,stranger)).status,404);
     assert.equal((await request(orderPath,stranger)).data.orders.length,0);
     assert.equal((await request(orderPath+'?id='+first.id,admin)).data.order.status,'allocating');
-    assert.equal((await api.summary(staff)).availableRaw,62_965);
-    assert.equal((await api.summary(admin)).allocatedRaw,62_965);
+    assert.equal((await api.summary(staff)).availableRaw,125_930);
+    assert.equal((await api.summary(admin)).availableRaw,200_000);
     profileReady=true;
     const originalNow = Date.now;
     try {
@@ -130,10 +136,14 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     } finally { Date.now=originalNow; }
     const {results:owned} = await db.prepare('SELECT * FROM resource_ownership').all();
     assert.equal(owned.length,3);
+    assert.equal((await request('/api/esim/purchase-cards?id='+first.id,customer)).status,404);
+    assert.equal((await request('/api/esim/purchase-cards?id='+first.id,staff)).data.cards.length,3);
+    assert.equal(funds.count('held'),0);
+    assert.equal(funds.count('spent'),1);
     assert.ok(owned.every(row=>row.owner_user_id===staff.id && row.group_id==='test'));
     const today = (await request(quotePath,admin,{ids:['SG_Daily','FR_1']})).data;
     assert.equal(today.lines[0].periodNum,1);
-    const combined = cart(undefined,[{id:'SG_Daily',priceRaw:16_774,count:2},{id:'FR_1',priceRaw:13_000,count:1}]);
+    const combined = cart(undefined,[{id:'SG_Daily',priceRaw:33_548,count:2},{id:'FR_1',priceRaw:26_000,count:1}]);
     const second=await request(orderPath,admin,combined);
     assert.equal(second.status,202);
     assert.deepEqual(submitted.at(-1).packageInfoList,[{packageCode:'SG_Daily',count:2,price:16774,periodNum:1},{packageCode:'FR_1',count:1,price:13000}]);
@@ -141,14 +151,14 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     const rejection=await request(orderPath,staff,cart());
     assert.equal(rejection.status,409);
     assert.equal(rejection.data.order.status,'rejected');
-    assert.equal((await api.summary(staff)).availableRaw,62_965);
+    assert.equal((await api.summary(staff)).availableRaw,125_930);
     failNextOrder='timeout';
     const uncertain=await request(orderPath,staff,cart());
     assert.equal(uncertain.data.order.status,'uncertain');
-    assert.equal((await api.summary(staff)).availableRaw,25_930);
+    assert.equal((await api.summary(staff)).availableRaw,51_860);
     assert.equal((await request(orderPath,staff,cart())).status,409);
     assert.equal(submitted.length,4);
-    assert.equal((await request(quotaPath,admin,{email:staff.email,amount:'1',expectedRaw:62_965})).status,409);
+    assert.equal((await request(quotaPath,admin,{email:staff.email,amount:'1',expectedRaw:125_930})).status,410);
     for (let attempt=0;attempt<5;attempt++) {
       assert.equal((await request('/api/settings/security',stranger,{currentPin:'000000',newPin:'111111'})).status,attempt===4?429:400);
     }
@@ -161,11 +171,52 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     failNextOrder=undefined;
     assert.equal((await request(orderPath,staff,retryFields)).data.order.orderNo,'ORDER5');
     assert.deepEqual(submitted[3],submitted[4]);
-    assert.equal((await api.summary(staff)).availableRaw,25_930);
+    assert.equal((await api.summary(staff)).availableRaw,51_860);
     assert.equal((await request(orderPath,staff,retryFields)).data.order.orderNo,'ORDER5');
     assert.equal(submitted.length,5);
+    assert.equal(funds.count('held'),0);
+    assert.equal(funds.count('spent'),3);
+    // A live transaction interrupted before this release retains the original supplier
+    // amount. Its legacy debit becomes part of the eventual quota migration.
+    const legacyId='LH-'+randomUUID(), oldTime=new Date(Date.now()-40_000).toISOString();
+    const legacyLines=[{id:'SG_Fixed',code:'SG_Fixed',packageCode:'SG123',name:'Singapore Fixed',priceRaw:cost,count:1}];
+    await db.prepare(`INSERT INTO esim_purchase_orders(id,user_id,user_email,user_name,status,staff,amount,lines,created_at,updated_at)
+      VALUES(?,?,?,?,'uncertain',1,?,?,?,?)`).bind(legacyId,staff.id,staff.email,'Test employee',cost,JSON.stringify(legacyLines),oldTime,oldTime).run();
+    assert.equal((await request(orderPath,staff,{id:legacyId,pin:'864209',retry:true})).data.order.status,'allocating');
+    assert.equal(submitted.at(-1).amount,cost);
+    assert.equal((await api.summary(staff)).availableRaw,51_860);
+    assert.equal((await db.prepare('SELECT amount FROM quota_transactions WHERE id=?').bind(legacyId).first()).amount,-cost);
+
+    await request('/api/settings/security',customer,{newPin:'864209'});
+    funds.credit({userId:customer.id,amountRaw:80_000,reference:'deposit:public',note:'Confirmed deposit'});
+    const selfService = await request(orderPath,customer,cart(undefined,[{id:'FR_1',priceRaw:26_000,count:1}]));
+    assert.equal(selfService.status,202);
+    assert.equal(selfService.data.order.amountRaw,26_000);
+    assert.equal(submitted.at(-1).amount,13_000);
+    assert.equal(funds.balance(customer.id),54_000);
+    assert.equal((await request(orderPath+'?id='+selfService.data.order.id,staff)).status,404);
+    assert.equal((await request('/api/esim/purchase-cards?id='+selfService.data.order.id,customer)).data.cards.length,1);
+    // Simulate a process exit after the balance hold and before a vendor request;
+    // an accepted order with an interrupted local settlement must be replayed once.
+    const beforeRestart=funds.balance(customer.id);
+    const interrupted='LH-'+randomUUID(), accepted='LH-'+randomUUID();
+    for (const [id,state] of [[interrupted,'preparing'],[accepted,'allocating']]) {
+      funds.reserve(customer.id,id,1000);
+      await db.batch([
+        db.prepare(`INSERT INTO esim_purchase_orders(id,user_id,user_email,user_name,status,staff,amount,lines,created_at,updated_at)
+          VALUES(?,?,?,?,?,1,1000,'[]',?,?)`).bind(id,customer.id,customer.email,'Test customer',state,oldTime,oldTime),
+        db.prepare('INSERT INTO esim_commerce_payments(payment_id,user_id,product_cost,retail_amount) VALUES(?,?,500,1000)').bind(id,customer.id),
+      ]);
+    }
+    const restarted=createEsimPurchases({config:{origin,bindings},wallet:funds,mf,supplier});
+    await restarted.ready();
+    await restarted.settle();
+    assert.equal(funds.balance(customer.id),beforeRestart-1000);
+    assert.equal((await db.prepare('SELECT status FROM esim_purchase_orders WHERE id=?').bind(interrupted).first()).status,'rejected');
+
+
   } finally {
     server.close();
-    await mf.dispose();
+    await mf.dispose(); funds.close();
   }
 });

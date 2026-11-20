@@ -27,8 +27,8 @@ export function createEsimSupplier(bindings, fetcher = fetch) {
     return result.obj;
   }
   return {
-    async catalog() {
-      const { packageList } = await request('package/list', { locationCode: '', type: 'BASE', packageCode: '', iccid: '' });
+    async catalog(locationCode = '') {
+      const { packageList } = await request('package/list', { locationCode, type: 'BASE', packageCode: '', iccid: '' });
       if (!Array.isArray(packageList)) throw new SupplierError('unknown');
       return packageList;
     },

@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>账户与资源市场 · Lumen</title>
+    <link rel="stylesheet" href="/__host/commerce.css" />
+    <script src="/__host/commerce.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <div class="wrap bar">
+        <a class="brand" href="/"><b>L</b> Lumen 资源中心</a>
+        <nav>
+          <a href="/__host/shop">资源市场</a><a href="/__host/wallet">我的钱包</a
+          ><a href="/" id="workspace" hidden>员工工作台</a>
+        </nav>
+        <a class="exit" href="/signout-with-chatgpt">退出</a>
+      </div>
+    </header>
+    <main class="wrap">
+      <p class="account" id="account"></p>
+      <h1 id="title">我的钱包</h1>
+      <p id="notice" role="status" aria-live="polite"></p>
+      <div id="wallet" hidden>
+        <div class="grid">
+          <section class="balance">
+            <h2>可用余额</h2>
+            <strong id="balance">—</strong> U
+            <p id="held"></p>
+            <a href="#ledger">查看余额明细</a>
+          </section>
+          <section>
+            <h2>充值 USDT</h2>
+            <form id="deposit-form">
+              <label>充值网络<select name="network" required></select></label
+              ><label
+                >入账金额（U）<input name="amount" type="number" step="1" min="5" value="50" required
+              /></label>
+              <p class="hint">最低充值 5 U。创建订单后，请按页面显示的精确金额转账。</p>
+              <button>获取收款二维码</button>
+            </form>
+          </section>
+        </div>
+        <section id="invoice" hidden>
+          <h2>充值付款</h2>
+          <div id="invoice-data"></div>
+        </section>
+        <section>
+          <h2>充值记录</h2>
+          <div id="deposits"></div>
+        </section>
+        <section id="ledger">
+          <h2>余额明细</h2>
+          <div id="entries"></div>
+        </section>
+        <section>
+          <h2>支付密码</h2>
+          <form id="pin-form">
+            <label
+              >原支付密码（首次设置可留空）<input
+                name="currentPin"
+                type="password"
+                pattern="[0-9]{6}"
+                maxlength="6"
+                inputmode="numeric"
+                autocomplete="off" /></label
+            ><label
+              >新的六位支付密码<input
+                name="newPin"
+                type="password"
+                pattern="[0-9]{6}"
+                maxlength="6"
+                inputmode="numeric"
+                autocomplete="new-password"
+                required /></label
+            ><button>设置支付密码</button>
+          </form>
+        </section>
+        <section id="admin" hidden>
+          <h2>为账号添加余额</h2>
+          <form id="credit-form">
+            <label>账号邮箱<input name="email" type="email" required /></label
+            ><label>入账金额（U）<input type="number" min="0.0001" step="0.0001" name="amount" required /></label
+            ><label>入账备注<input name="note" maxlength="180" required /></label><button>核对并添加余额</button>
+          </form>
+          <h3>收款网络及异常转账</h3>
+          <div id="health"></div>
+          <div id="reviews"></div>
+        </section>
+      </div>
+      <div id="shop" hidden>
+        <nav class="tabs">
+          <a href="#catalog">eSIM 套餐</a><a href="#address">地址生成</a><a href="#orders">我的订单</a>
+        </nav>
+        <section id="catalog">
+          <h2>eSIM 流量套餐</h2>
+          <form class="inline" id="search">
+            <label>搜索套餐、国家或运营商<input name="q" type="search" placeholder="例如 Singapore" /></label
+            ><button>搜索</button>
+          </form>
+          <div id="products"></div>
+          <div class="buttons">
+            <button id="prev" class="secondary">上一页</button><button id="next" class="secondary">下一页</button>
+          </div>
+        </section>
+        <section id="address">
+          <h2>地址生成 <span>10 U / 单</span></h2>
+          <details id="address-details">
+            <summary>填写订单</summary>
+            <form id="address-form">
+              <label>模板<select name="template" required></select></label
+              ><label>英文姓名<input name="name" required maxlength="120" autocomplete="off" /></label
+              ><label>地址第 1 行<input name="line1" required maxlength="160" autocomplete="off" /></label
+              ><label>地址第 2 行<input name="line2" maxlength="160" autocomplete="off" /></label
+              ><label>地址第 3 行<input name="line3" maxlength="160" autocomplete="off" /></label
+              ><label>接收邮箱<input name="email" type="email" required autocomplete="off" /></label
+              ><label
+                >支付密码<input
+                  name="pin"
+                  type="password"
+                  inputmode="numeric"
+                  pattern="[0-9]{6}"
+                  maxlength="6"
+                  required
+              /></label>
+              <p class="hint">提交时预留 10 U，交付完成后扣款。处理失败会释放预留金额。</p>
+              <button>提交订单 · 10 U</button>
+            </form>
+          </details>
+        </section>
+        <section id="orders">
+          <h2>我的订单</h2>
+          <button id="refresh-orders" class="secondary">刷新订单</button>
+          <div id="order-list"></div>
+          <div id="order-details"></div>
+        </section>
+      </div>
+      <dialog id="dialog">
+        <form method="dialog">
+          <h2 id="dialog-title"></h2>
+          <div id="dialog-fields"></div>
+          <div class="buttons">
+            <button value="cancel" formnovalidate class="secondary">取消</button><button value="ok">确认</button>
+          </div>
+        </form>
+      </dialog>
+    </main>
+  </body>
+</html>

@@ -143,5 +143,20 @@ export function createOutlookMail(root, config, fetchImpl = fetch) {
     queue = run.catch(() => {});
     return run;
   }
-  return { validate, fetch: relay, validateWorkbookSender, sendEsimWorkbook };
+  async function sendRegistrationCode(email, code) {
+    if (!validEmail(email) || !/^\d{6}$/.test(code)) throw new Error('Invalid registration message');
+    const current = await token();
+    const response = await fetchImpl('https://graph.microsoft.com/v1.0/me/sendMail', {
+      method: 'POST', headers: { authorization: `Bearer ${current.access}`, 'content-type': 'application/json' },
+      signal: AbortSignal.timeout(30000),
+      body: JSON.stringify({ message: {
+        subject: 'Lumen 注册验证码',
+        body: { contentType: 'Text', content: `你的注册验证码是 ${code}，有效期 10 分钟。如果你没有申请注册，可忽略此邮件。` },
+        toRecipients: [{ emailAddress: { address: email } }],
+      }, saveToSentItems: false }),
+    });
+    if (response.status === 401) cached = null;
+    if (response.status !== 202) throw new Error('Registration email was not accepted');
+  }
+  return { validate, fetch: relay, validateWorkbookSender, sendEsimWorkbook, sendRegistrationCode };
 }

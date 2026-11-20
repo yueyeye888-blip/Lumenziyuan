@@ -66,6 +66,15 @@ export async function POST(request: Request) {
   if (status === "failed") changes.error = clean(body.error, 500) || "自动处理失败";
   else changes.error = null;
 
-  await db.update(addressOrders).set(changes).where(eq(addressOrders.requestNo, requestNo));
+  try {
+    await db.update(addressOrders).set(changes).where(eq(addressOrders.requestNo, requestNo));
+  } catch (error) {
+    for (let cause: unknown = error; cause instanceof Error; cause = cause.cause) {
+      if (cause.message.includes("lumen_billed_order_final")) {
+        return Response.json({ error: "此收费订单已结算，请核对最终状态" }, { status: 409, headers });
+      }
+    }
+    throw error;
+  }
   return Response.json({ ok: true }, { headers });
 }

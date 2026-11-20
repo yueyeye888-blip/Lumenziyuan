@@ -3,6 +3,8 @@ import { promisify } from 'node:util';
 import { createEsimSupplier, SupplierError } from './esim-supplier.mjs';
 import { createEsimRenewals, renewalSchema } from './esim-renewals.mjs';
 
+import { retailPrice, paymentSchema, paymentIntent, getPayment, settlePayment, recoverPayments, settlePendingPayments, supplierAvailable } from './esim-commerce.mjs';
+
 const derive = promisify(pbkdf2);
 const supplierName = 'eSIMAccess';
 const maximumCards = 30;
@@ -52,16 +54,9 @@ function orderInput(fields) {
   400, '购买数量须为正整数，每单合计最多 30 张。');
   return fields;
 }
-function quotaInput(fields) {
-  check(typeof fields?.email === 'string' && typeof fields.amount === 'string' &&
-    /^\d{1,8}(?:\.\d{1,4})?$/.test(fields.amount) && Number.isSafeInteger(fields.expectedRaw) && fields.expectedRaw >= 0,
-  400, '请输入有效的美元额度，最多 4 位小数。');
-  return { email:fields.email.trim().toLowerCase(), target:Math.round(Number(fields.amount) * 10_000), expectedRaw:fields.expectedRaw };
-}
-
-export function createEsimPurchases({ config, mf, identities, readBody, supplier = createEsimSupplier(config.bindings || {}) }) {
+export function createEsimPurchases({ config, mf, wallet, readBody, supplier = createEsimSupplier(config.bindings || {}) }) {
   const admins = new Set(String(config.bindings?.RESOURCE_ADMIN_EMAILS || '').split(',').map(email => email.trim().toLowerCase()).filter(Boolean));
-  const isAdmin = user => admins.has(user.email.toLowerCase());
+  const isAdmin = user => user.role !== 'customer' && admins.has(user.email.toLowerCase());
   const origins = new Set([config.origin, ...(config.aliasOrigins || [])]);
   let database;
   async function initialize() {
@@ -74,8 +69,9 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
       )`),
       db.prepare('CREATE INDEX IF NOT EXISTS esim_purchase_orders_owner ON esim_purchase_orders(user_id,created_at)'),
       db.prepare('CREATE INDEX IF NOT EXISTS esim_purchase_orders_status ON esim_purchase_orders(status,created_at)'),
-      ...renewalSchema(db),
+      ...renewalSchema(db), paymentSchema(db),
     ]);
+    await recoverPayments(db,wallet);
     return db;
   }
   const dbReady = () => database ??= initialize().catch(error => { database = null; throw error; });
@@ -97,23 +93,15 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
     )`).bind(supplierName).first();
     return total;
   }
-  async function reserved(db, filter, ...parameters) {
-    const { total } = await db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM (
-      SELECT amount,staff,user_id FROM esim_purchase_orders WHERE status IN ('submitting','uncertain')
-      UNION ALL
-      SELECT amount,staff,user_id FROM esim_renewal_lines WHERE status IN ('queued','submitting','uncertain')
-    ) WHERE ${filter}`).bind(...parameters).first();
-    return total;
-  }
-  async function availability(db, user, suppliedBalance) {
-    if (isAdmin(user)) return Math.max(0, suppliedBalance - await allocated(db) - await reserved(db,'staff=0'));
-    return Math.max(0, Math.min(suppliedBalance, await balanceFor(db,user.id) - await reserved(db,'user_id=?',user.id)));
+  function availability(user) {
+    check(wallet,503,'账户余额服务暂不可用。');
+    return wallet.balance(user.id);
   }
 
   async function packageLines(db, user, ids, catalog) {
     const byId = new Map(catalog.map(plan => [plan.slug || plan.packageCode, plan]));
     let memberships;
-    if (!isAdmin(user)) {
+    if (!isAdmin(user) && user.role !== 'customer') {
       const { results } = await db.prepare(`SELECT i.product_id,i.package_code,i.group_id FROM resource_group_items i
         JOIN resource_group_members m ON m.group_id=i.group_id JOIN resource_groups g ON g.id=i.group_id
         WHERE i.supplier=? AND m.user_email=? AND m.can_purchase=1 ORDER BY i.group_id`).bind(supplierName,user.email.toLowerCase()).all();
@@ -124,9 +112,9 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
       check(plan && validId.test(plan.packageCode || '') && Number.isSafeInteger(plan.price) &&
         plan.price >= 0 && plan.currencyCode === 'USD', 409, '所选套餐当前不可购买，请刷新资源市场。');
       const group = memberships?.find(item => item.product_id === id || item.package_code === plan.packageCode);
-      check(isAdmin(user) || group, 403, '当前账号没有购买所选套餐的权限。');
+      check(isAdmin(user) || user.role === 'customer' || group, 403, '当前账号没有购买所选套餐的权限。');
       return { id, code:plan.slug || plan.packageCode, packageCode:plan.packageCode, name:plan.name,
-        priceRaw:plan.price, periodNum:Number(plan.dataType) === 2 && plan.duration === 1 ? 1 : undefined, groupId:group?.group_id || null };
+        priceRaw:retailPrice(plan.price), costRaw:plan.price, periodNum:Number(plan.dataType) === 2 && plan.duration === 1 ? 1 : undefined, groupId:group?.group_id || null };
     });
   }
 
@@ -168,11 +156,11 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
   function present(row) {
     const adminView = { account:row.user_email, name:row.user_name };
     const items = JSON.parse(row.lines).map(({ id, name, count, priceRaw }) => ({ id, name, count, priceRaw }));
-    return { ...adminView, id:row.id, status:row.status === 'submitting' ? 'uncertain' : row.status,
+    return { ...adminView, id:row.id, status:['preparing','submitting'].includes(row.status) ? 'uncertain' : row.status,
       orderNo:row.order_no, amountRaw:row.amount, items, error:row.error, createdAt:row.created_at, retryAfter: new Date(Date.parse(row.updated_at)+30_000).toISOString() };
   }
   const unresolved = (db,user) => db.prepare(`SELECT * FROM esim_purchase_orders
-    WHERE user_id=? AND status IN ('submitting','uncertain') ORDER BY created_at DESC LIMIT 1`).bind(user.id).first();
+    WHERE user_id=? AND status IN ('preparing','submitting','uncertain') ORDER BY created_at DESC LIMIT 1`).bind(user.id).first();
 
   async function quote(db,user,ids) {
     const pending = await unresolved(db,user);
@@ -180,14 +168,14 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
     const [catalog, rawBalance, security] = await Promise.all([supplier.catalog(), supplier.balance(),readSecurity(db,user)]);
     return {
       lines:(await packageLines(db,user,onlyIds(ids),catalog)).map(({ id, name, priceRaw, periodNum }) => ({ id,name,priceRaw,periodNum })),
-      availableRaw:await availability(db,user,rawBalance), pinConfigured:Boolean(security),
+      availableRaw:Math.min(availability(user),retailPrice(await supplierAvailable(db,rawBalance))), pinConfigured:Boolean(security),
       maxCards:maximumCards, currency:'USD',
     };
   }
 
   async function recordAccepted(db,row,orderNo) {
     const changes = [];
-    if (row.staff) {
+    if (row.staff && !await getPayment(db,row.id)) {
       const left = await balanceFor(db,row.user_id) - row.amount;
       changes.push(db.prepare(`INSERT INTO quota_transactions(id,user_id,platform,kind,amount,balance_after,reference,note,created_at)
         VALUES(?,?,?,?,?,?,?,?,?)`).bind(row.id,row.user_id,supplierName,'购买',-row.amount,left,orderNo,'eSIMAccess 实际下单',now()));
@@ -195,6 +183,7 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
     changes.push(db.prepare(`UPDATE esim_purchase_orders SET status='allocating',order_no=?,error=NULL,updated_at=? WHERE id=?`)
       .bind(orderNo,now(),row.id));
     await db.batch(changes);
+    await settlePayment(db,wallet,row.id);
   }
 
   async function submit(db,user,fields) {
@@ -203,6 +192,7 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
       const existing = await getOrder(db,id);
       if (existing) {
         check(existing.user_id === user.id, 404, '订单未找到。');
+        await settlePayment(db,wallet,id);
         return present(existing);
       }
       check(!await unresolved(db,user),409,'有一笔订单正在核对，请先查看购买记录。');
@@ -214,11 +204,25 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
         return { ...line,count };
       });
       const amount = lines.reduce((sum,line) => sum+line.priceRaw*line.count,0);
-      check(Number.isSafeInteger(amount) && amount <= await availability(db,user,balance),402,
-        isAdmin(user) ? 'eSIMAccess 可用余额不足，请核对主账号余额及已分配额度。' : '可用额度不足，请联系管理员。');
+      const cost = lines.reduce((sum,line)=>sum + line.costRaw*line.count,0);
+      check(Number.isSafeInteger(amount) && Number.isSafeInteger(cost),400,'订单金额无效。');
+      check(amount <= availability(user),402,'账户余额不足，请先充值。');
+      check(cost <= await supplierAvailable(db,balance),409,'供应商暂时无法接受此金额的订单。');
       const timestamp = now();
-      await db.prepare(`INSERT INTO esim_purchase_orders(id,user_id,user_email,user_name,status,staff,amount,lines,created_at,updated_at)
-        VALUES(?,?,?,?,'submitting',?,?,?,?,?)`).bind(id,user.id,user.email,user.name || user.email,isAdmin(user)?0:1,amount,JSON.stringify(lines),timestamp,timestamp).run();
+      await db.batch([
+        db.prepare(`INSERT INTO esim_purchase_orders(id,user_id,user_email,user_name,status,staff,amount,lines,created_at,updated_at)
+          VALUES(?,?,?,?,'preparing',?,?,?,?,?)`).bind(id,user.id,user.email,user.name || user.email,isAdmin(user)?0:1,amount,JSON.stringify(lines),timestamp,timestamp),
+        paymentIntent(db,id,user.id,cost,amount),
+      ]);
+      try {
+        if (amount) wallet.reserve(user.id,id,amount);
+        await db.prepare("UPDATE esim_purchase_orders SET status='submitting',updated_at=? WHERE id=?").bind(now(),id).run();
+      } catch (error) {
+        // No supplier call has been made yet.
+        await db.prepare("UPDATE esim_purchase_orders SET status='rejected',error='余额预留失败，订单未发送。',updated_at=? WHERE id=?").bind(now(),id).run();
+        await settlePayment(db,wallet,id);
+        throw error;
+      }
       return sendOrder(db,await getOrder(db,id));
     });
   }
@@ -226,11 +230,14 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
   async function sendOrder(db,row,retry=false) {
     let orderNo;
     try {
-      orderNo = await supplier.order(row.id,JSON.parse(row.lines),row.amount);
+      const lines = JSON.parse(row.lines).map(line => ({...line,priceRaw:line.costRaw ?? line.priceRaw}));
+      const cost = lines.reduce((sum,line)=>sum+line.priceRaw*line.count,0);
+      orderNo = await supplier.order(row.id,lines,cost);
     } catch (error) {
       const rejection = !retry && error instanceof SupplierError && Object.hasOwn(definiteFailures,error.code) ? definiteFailures[error.code] : null;
       await db.prepare('UPDATE esim_purchase_orders SET status=?,error=?,updated_at=? WHERE id=?')
         .bind(rejection?'rejected':'uncertain',rejection,now(),row.id).run();
+      await settlePayment(db,wallet,row.id);
       return present(await getOrder(db,row.id));
     }
     await recordAccepted(db,row,orderNo);
@@ -247,7 +254,7 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
       await verifyPaymentPin(db,user,fields.pin,await readSecurity(db,user));
       const lines = JSON.parse(row.lines);
       const current = await packageLines(db,user,lines.map(line=>line.id),await supplier.catalog());
-      check(current.every((line,index)=>line.code===lines[index].code && line.priceRaw===lines[index].priceRaw &&
+      check(current.every((line,index)=>line.code===lines[index].code && line.costRaw===(lines[index].costRaw ?? lines[index].priceRaw) &&
         line.periodNum===lines[index].periodNum),409,'套餐或价格已变动，请先在供应商后台核对此单。');
       await db.prepare('UPDATE esim_purchase_orders SET updated_at=? WHERE id=?').bind(now(),row.id).run();
       // Reuse the exact supplier transaction ID, lines and amounts.
@@ -307,38 +314,28 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
     }
   }
 
-  async function quotaOverview(db) {
-    const [balance, total] = await Promise.all([supplier.balance(),allocated(db)]);
-    const employees = identities.list().filter(account => !isAdmin(account) && account.enabled !== false);
-    const accounts = await Promise.all(employees.map(async account => ({
-      email:account.email, name:account.name, availableRaw:await balanceFor(db,account.id),
-    })));
-    return { accounts, balanceRaw:balance, allocatedRaw:total, unallocatedRaw:Math.max(0,balance-total-await reserved(db,'staff=0')) };
-  }
-  async function assignQuota(db, fields) {
-    const { email,target,expectedRaw } = quotaInput(fields);
-    return serialize(async () => {
-      const account = identities.list().find(account => account.email.toLowerCase() === email && account.enabled !== false && !isAdmin(account));
-      check(account,404,'未找到该员工账号。');
-      const current = await balanceFor(db,account.id);
-      check(current === expectedRaw,409,'员工额度已变动，请重新打开此窗口。');
-      const difference = target-current;
-      if (!difference) return { availableRaw:target };
-      check(target >= await reserved(db,'user_id=?',account.id),409,'该员工有一笔正在核对的订单，无法收回这部分额度。');
-      if (difference > 0) {
-        const available = await supplier.balance() - await allocated(db) - await reserved(db,'staff=0');
-        check(difference <= available,402,'分配金额超过 eSIMAccess 可分配余额。');
-      }
-      await db.prepare(`INSERT INTO quota_transactions(id,user_id,platform,kind,amount,balance_after,note,created_at)
-        VALUES(?,?,?,?,?,?,?,?)`).bind(randomUUID(),account.id,supplierName,difference>0?'分配额度':'收回额度',difference,target,'管理员调整 eSIMAccess 额度',now()).run();
-      return { availableRaw:target };
-    });
+  async function purchaseCards(db,user,id) {
+    check(validRequestId.test(id || ''),404,'订单未找到。');
+    const row = await getOrder(db,id);
+    check(row && (row.user_id === user.id || isAdmin(user)),404,'订单未找到。');
+    if (!row.order_no) return {cards:[]};
+    if (row.status === 'allocating') await syncOrder(db,row);
+    const {results} = await db.prepare(`SELECT resource_id FROM resource_ownership
+      WHERE supplier=? AND owner_user_id=? AND order_no=?`).bind(supplierName,row.user_id,row.order_no).all();
+    const ids = new Set(results.map(item=>item.resource_id));
+    if (!ids.size) return {cards:[]};
+    const profiles = await supplier.profiles(row.order_no);
+    return {cards:profiles.filter(card=>card.orderNo===row.order_no && ids.has(card.esimTranNo)).map(card=>({
+      resourceId:card.esimTranNo, iccid:card.iccid || null, activationCode:card.ac || null,
+      qrCodeUrl:typeof card.qrCodeUrl==='string' && /^https:\/\//i.test(card.qrCodeUrl) ? card.qrCodeUrl : null,
+      expiresAt:card.expiredTime || null, name:card.packageList?.[0]?.packageName || 'eSIM',
+    }))};
   }
 
-  const renewals = createEsimRenewals({ supplier,dbReady,serialize,isAdmin,availability,balanceFor,check,readSecurity,verifyPaymentPin,
+  const renewals = createEsimRenewals({ supplier,dbReady,serialize,isAdmin,availability,wallet,check,readSecurity,verifyPaymentPin,
     validPin,definiteFailures,supplierName });
   const renewalPaths = new Set(['/api/esim/renewal-quote','/api/esim/renewals']);
-  const paths = new Set(['/api/esim/purchase-quote','/api/esim/purchases','/api/esim/purchase-quota',...renewalPaths]);
+  const paths = new Set(['/api/esim/purchase-quote','/api/esim/purchases','/api/esim/purchase-quota','/api/esim/purchase-cards',...renewalPaths]);
   async function route(req,res,url,user) {
     const security = url.pathname === '/api/settings/security' && req.method === 'POST';
     if (!security && !paths.has(url.pathname)) return false;
@@ -350,7 +347,14 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
     try {
       const quota = url.pathname === '/api/esim/purchase-quota';
       const renewal = renewalPaths.has(url.pathname);
-      if (quota) check(isAdmin(user),403,'仅管理员可以分配额度。');
+      if (quota) {
+        check(isAdmin(user),403,'仅管理员可管理账户余额。');
+        return respond(410,{error:'账户余额已统一管理，请打开账户余额页面。',href:'/__host/wallet'});
+      }
+      if (url.pathname==='/api/esim/purchase-cards') {
+        check(req.method==='GET',405,'请求方式不支持。');
+        return respond(200,await purchaseCards(await dbReady(),user,url.searchParams.get('id')));
+      }
       if (req.method === 'POST') {
         check(origins.has(req.headers.origin) && /^application\/json\b/i.test(req.headers['content-type'] || ''),
           403,'请求来源不匹配。');
@@ -362,13 +366,11 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
         }
         const db = await dbReady();
         if (security) return respond(200,await updateSecurity(db,user,fields));
-        if (quota) return respond(200,await assignQuota(db,fields));
         if (url.pathname.endsWith('purchase-quote')) return respond(200,await quote(db,user,onlyIds(fields?.ids)));
         const order = fields?.retry === true ? await retryOrder(db,user,fields) : await submit(db,user,fields);
         return respond(order.status === 'rejected' ? 409 : order.status === 'ready' ? 200 : 202,{ order:{ ...order, canRetry:true } });
       }
       if (req.method === 'GET' && url.pathname.endsWith('/renewals')) return respond(200,await renewals.history(user,url.searchParams));
-      if (req.method === 'GET' && quota) return respond(200,await quotaOverview(await dbReady()));
       if (req.method === 'GET' && url.pathname.endsWith('/purchases')) {
         const db = await dbReady();
         const id = url.searchParams.get('id');
@@ -376,6 +378,7 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
           check(validRequestId.test(id),404,'订单未找到。');
           let row = await getOrder(db,id);
           check(row && (isAdmin(user) || row.user_id === user.id),404,'订单未找到。');
+          await settlePayment(db,wallet,row.id);
           if (row.status === 'allocating') {
             await syncOrder(db,row);
             row = await getOrder(db,id);
@@ -392,7 +395,7 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
       }
       return respond(405,{error:'请求方式不支持。'});
     } catch (error) {
-      if (error instanceof PurchaseError) return respond(error.status,{ error:error.message });
+      if (error instanceof PurchaseError || error?.status === 402) return respond(error.status,{ error:error.message });
       if (renewalPaths.has(url.pathname)) {
         console.warn('eSIM renewal request unavailable');
         return respond(503,{error:'续费服务暂时不可用。已提交的请求请到续费记录中核对。'});
@@ -403,7 +406,13 @@ export function createEsimPurchases({ config, mf, identities, readBody, supplier
   }
   async function summary(user) {
     const db = await dbReady();
-    return isAdmin(user) ? { allocatedRaw:await allocated(db) } : { availableRaw:Math.max(0, await balanceFor(db,user.id) - await reserved(db,'user_id=?',user.id)) };
+    return { availableRaw:availability(user), ...(isAdmin(user) ? {allocatedRaw:await allocated(db)} : {}) };
   }
-  return { route, summary, sync, reconcile, ready:dbReady };
+  async function verifyPin(user,pin) {
+    check(validPin(pin),400,'请输入 6 位支付密码。');
+    const db = await dbReady();
+    return serialize(async () => verifyPaymentPin(db,user,pin,await readSecurity(db,user)));
+  }
+  const settle = async () => settlePendingPayments(await dbReady(),wallet);
+  return { route, summary, sync, reconcile, verifyPin, settle, ready:dbReady };
 }

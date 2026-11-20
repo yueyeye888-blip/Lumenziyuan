@@ -1,5 +1,7 @@
 import { createEsimSupplier } from './esim-supplier.mjs';
 
+import { retailPrice } from './esim-commerce.mjs';
+
 const gibibyte = 1024 ** 3;
 const freshFor = 60_000;
 const usableFor = 10 * 60_000;
@@ -24,7 +26,7 @@ function publicItem(plan) {
   }
   return {
     id:plan.slug || plan.packageCode, packageCode:plan.packageCode, slug:plan.slug,
-    name:plan.name, description:plan.description, priceRaw:plan.price, price:plan.price / 10_000,
+    name:plan.name, description:plan.description, priceRaw:retailPrice(plan.price), price:retailPrice(plan.price) / 10_000,
     currency:plan.currencyCode, volume:plan.volume, duration:plan.duration, durationUnit:plan.durationUnit,
     location:plan.location, speed:plan.speed || null, favoriteOnSupplier:Boolean(plan.favorite),
     countryName:plan.locationNetworkList?.[0]?.locationName || plan.location,
@@ -88,14 +90,19 @@ export function createEsimCatalog(bindings, { supplier = createEsimSupplier(bind
     const minVolume = Math.max(Number(params.get('minDataGb')) || 0, 0) * gibibyte;
     const maxPrice = Math.max(Number(params.get('maxPrice')) || 0, 0);
     const maxDuration = Math.max(Number(params.get('maxDuration')) || 0, 0);
-    const { data, stale, cache } = await read();
+    const location = (params.get('location') || '').trim().toUpperCase().slice(0,3);
+    // The supplier distinguishes local and roaming plans when filtering a country.
+    const { data, stale, cache } = location
+      ? { data:snapshot(await supplier.catalog(location),now()), stale:false, cache:'location' }
+      : await read();
     const candidates = ids.length
       ? [...new Set(ids.flatMap(id => data.byId.get(id) || []))].sort((left,right) => left.index - right.index)
       : data.entries;
     const filtered = candidates.filter(entry => {
       const plan = entry.plan;
+      if (plan.currencyCode !== 'USD' || !Number.isSafeInteger(plan.price) || plan.price < 0 || !Number.isSafeInteger(plan.price*2)) return false;
       if (minVolume && plan.volume < minVolume) return false;
-      if (maxPrice && plan.price / 10_000 > maxPrice) return false;
+      if (maxPrice && retailPrice(plan.price) / 10_000 > maxPrice) return false;
       if (maxDuration && plan.duration > maxDuration) return false;
       return !query || (entry.search ??= searchText(plan)).includes(query);
     });
@@ -106,14 +113,16 @@ export function createEsimCatalog(bindings, { supplier = createEsimSupplier(bind
     } };
   }
 
-  async function route(req,res,url) {
-    // Country-filtered queries retain the supplier-specific region behavior of the existing route.
-    if (req.method !== 'GET' || url.pathname !== '/api/esim/packages' || url.searchParams.get('location')) return false;
+  async function route(req,res,url,user) {
+    if (req.method !== 'GET' || url.pathname !== '/api/esim/packages') return false;
     const headers = { 'content-type':'application/json; charset=utf-8', 'cache-control':'private, no-store' };
     try {
       const result = await response(url.searchParams);
       res.writeHead(200, { ...headers, 'x-lumen-catalog-cache':result.cache });
-      res.end(JSON.stringify(result.body));
+      const body = user?.role === 'customer' ? {...result.body,
+        items:result.body.items.map(({favoriteOnSupplier,...plan})=>plan),
+      } : result.body;
+      res.end(JSON.stringify(body));
     } catch {
       res.writeHead(502,headers);
       res.end(JSON.stringify({ connected:false, error:'供应商目录暂时不可用，请稍后重试。' }));

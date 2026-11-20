@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { SupplierError } from './esim-supplier.mjs';
 
+import { retailPrice, paymentIntent, settlePayment, supplierAvailable } from './esim-commerce.mjs';
+
 const maxCards = 30;
 const quoteLifetime = 3 * 60_000;
 const validResource = /^[A-Za-z0-9_-]{1,100}$/;
@@ -50,7 +52,7 @@ const schema = [
 ];
 export const renewalSchema = db => schema.map(sql => db.prepare(sql));
 
-export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, availability, balanceFor, check, readSecurity,
+export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, availability, wallet, check, readSecurity,
   verifyPaymentPin, validPin, definiteFailures, supplierName, throttle = delay }) {
   const quotes = new Map();
 
@@ -88,7 +90,7 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
         : preferred ? [preferred,...plans.filter(plan=>plan.packageCode !== preferred.packageCode)] : plans;
       if (!matched.length) return skip(batch ? '供应商未返回与原套餐匹配的续费方案。' : '供应商未返回可用的续费方案。');
       return { ...card, iccid:profile.iccid, options:matched.map(plan=>({
-        code:plan.packageCode, name:plan.name || plan.slug || plan.packageCode, priceRaw:plan.price,
+        code:plan.packageCode, name:plan.name || plan.slug || plan.packageCode, priceRaw:retailPrice(plan.price), costRaw:plan.price,
         duration:plan.duration, volume:plan.volume, durationUnit:plan.durationUnit,
       })) };
     } catch {
@@ -96,7 +98,7 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
     }
   }
 
-  function publicCard({ iccid, ...card }) { return card; }
+  function publicCard({ iccid, options, ...card }) { return {...card, options:options.map(({costRaw,...offer})=>offer)}; }
   async function quote(user,fields) {
     const ids = fields?.ids;
     check(Array.isArray(ids) && ids.length>=1 && ids.length<=maxCards &&
@@ -121,7 +123,7 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
       if (quotes.size>=256) quotes.delete(quotes.keys().next().value);
     }
     quotes.set(id,{id, userId:user.id, cards, issuedAt,expiresAt, single:!batch});
-    return { id, cards:cards.map(publicCard), availableRaw:await availability(db,user,raw),
+    return { id, cards:cards.map(publicCard), availableRaw:Math.min(availability(user),retailPrice(await supplierAvailable(db,raw))),
       pinConfigured:Boolean(await readSecurity(db,user)), expiresAt:new Date(expiresAt).toISOString() };
   }
 
@@ -134,22 +136,15 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
     };
   }
 
-  async function recordSuccess(db,line,result,staff,userId) {
-    const changes=[];
-    if (staff) {
-      const balance = await balanceFor(db,userId);
-      changes.push(db.prepare(`INSERT INTO quota_transactions(id,user_id,platform,kind,amount,balance_after,reference,note,created_at)
-        VALUES(?,?,?,?,?,?,?,?,?)`).bind(line.transactionId,userId,supplierName,'续费',-line.priceRaw,balance-line.priceRaw,
-        result.receipt,'eSIMAccess 续费',now()));
-    }
-    changes.push(db.prepare(`UPDATE esim_renewal_lines SET status='succeeded',receipt=?,expires_at=?,total_volume=?,
+  async function recordSuccess(db,line,result) {
+    await db.prepare(`UPDATE esim_renewal_lines SET status='succeeded',receipt=?,expires_at=?,total_volume=?,
       total_duration=?,updated_at=? WHERE id=? AND status='submitting'`).bind(
         result.receipt,expiry(result.expiredTime),Number.isSafeInteger(result.totalVolume)?result.totalVolume:null,
-        Number.isSafeInteger(result.totalDuration)?result.totalDuration:null,now(),line.transactionId));
-    await db.batch(changes);
+        Number.isSafeInteger(result.totalDuration)?result.totalDuration:null,now(),line.transactionId).run();
+    await settlePayment(db,wallet,line.transactionId);
   }
 
-  async function process(db,lines,staff,userId) {
+  async function process(db,lines) {
     for (const line of lines) {
       await serialize(async () => {
         const started = await db.prepare("UPDATE esim_renewal_lines SET status='submitting',updated_at=? WHERE id=? AND status='queued'")
@@ -157,21 +152,23 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
         if (started.meta.changes !== 1) return;
         let result;
         try {
-          result = await supplier.topup(line);
+          result = await supplier.topup({...line,priceRaw:line.costRaw});
         } catch (error) {
           const failure = error instanceof SupplierError ?
             (Object.hasOwn(trustedFailure,error.code) ? trustedFailure[error.code] :
               Object.hasOwn(definiteFailures,error.code) ? definiteFailures[error.code] : null) : null;
           await db.prepare('UPDATE esim_renewal_lines SET status=?,error=?,updated_at=? WHERE id=?')
             .bind(failure?'rejected':'uncertain',failure,now(),line.transactionId).run();
+          await settlePayment(db,wallet,line.transactionId);
           return;
         }
-        await recordSuccess(db,line,result,staff,userId);
+        await recordSuccess(db,line,result);
       }).catch(async () => {
         // A sending attempt can have reached the supplier even when storage failed.
         await db.prepare(`UPDATE esim_renewal_lines SET status=CASE status WHEN 'queued' THEN 'not_sent' ELSE 'uncertain' END,
           updated_at=? WHERE id=? AND status IN ('queued','submitting')`)
           .bind(now(),line.transactionId).run().catch(()=>{});
+        await settlePayment(db,wallet,line.transactionId).catch(()=>{});
       });
     }
   }
@@ -204,16 +201,27 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
       await verifyPaymentPin(db,user,pin,await readSecurity(db,user));
       const amount = permitted.reduce((sum,line)=>sum+line.priceRaw,0);
       const balance = await supplier.balance();
-      check(Number.isSafeInteger(amount) && amount<=await availability(db,user,balance),402,'eSIMAccess 可用余额或员工额度不足。');
+      const cost = permitted.reduce((sum,line)=>sum+line.costRaw,0);
+      check(Number.isSafeInteger(amount) && Number.isSafeInteger(cost),400,'订单金额无效。');
+      check(amount<=availability(user),402,'账户余额不足，请先充值。');
+      check(cost<=await supplierAvailable(db,balance),409,'供应商暂时无法接受此金额的订单。');
       const staff = isAdmin(user)?0:1;
       const date = now();
       const lines=permitted.map((line,index)=>({...line,transactionId:id+'-'+String(index+1).padStart(2,'0')}));
-      await db.batch(lines.map(line=>db.prepare(`INSERT INTO esim_renewal_lines
+      await db.batch(lines.flatMap(line=>[db.prepare(`INSERT INTO esim_renewal_lines
         (id,batch_id,user_id,user_email,staff,resource_id,card_label,masked_iccid,plan_name,amount,status,created_at,updated_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,'queued',?,?)`).bind(line.transactionId,id,user.id,user.email,staff,
-          line.resourceId,line.cardName,line.maskedIccid,line.name,line.priceRaw,date,date)));
+          line.resourceId,line.cardName,line.maskedIccid,line.name,line.priceRaw,date,date),
+        paymentIntent(db,line.transactionId,user.id,line.costRaw,line.priceRaw)]));
+      try {
+        for (const line of lines) if (line.priceRaw) wallet.reserve(user.id,line.transactionId,line.priceRaw);
+      } catch (error) {
+        await db.prepare("UPDATE esim_renewal_lines SET status='not_sent',error='余额预留失败，未发送续费。' WHERE batch_id=? AND status='queued'").bind(id).run();
+        for (const line of lines) await settlePayment(db,wallet,line.transactionId);
+        throw error;
+      }
       quotes.delete(id);
-      void process(db,lines,staff,user.id).catch(()=>console.warn('eSIM renewal batch interrupted'));
+      void process(db,lines).catch(()=>console.warn('eSIM renewal batch interrupted'));
       return { id, records:(await readBatch(db,id)).map(present) };
     });
   }
@@ -225,6 +233,7 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
       check(validBatch.test(id),404,'续费记录未找到。');
       const rows = await readBatch(db,id);
       check(rows.length && (isAdmin(user) || rows[0].user_id===user.id),404,'续费记录未找到。');
+      for (const row of rows) await settlePayment(db,wallet,row.id);
       return { id,records:rows.map(present) };
     }
     const offset = query.get('offset') || '0';

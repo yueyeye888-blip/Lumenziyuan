@@ -11,6 +11,8 @@ export const dynamic = "force-dynamic";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function POST(request: Request) {
+  // The self-hosted gateway settles inventory and the wallet together.
+  if (env.SELFHOST_WALLET_REQUIRED === "1") return Response.json({ error: "请从库存认领页面提交。" }, { status: 409 });
   const user = await getChatGPTUser();
   if (!user) return Response.json({ error: "请先登录" }, { status: 401 });
   const body = await request.json() as { batchId?: string; quantity?: number; recipientEmail?: string };

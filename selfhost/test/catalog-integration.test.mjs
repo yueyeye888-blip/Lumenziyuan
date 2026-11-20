@@ -19,7 +19,7 @@ test('all group lookups share one supplier fetch and keep order, codes, search a
   const [first,second,third] = await Promise.all([
     response({ids:'cn123,ID_Data,id123,missing',limit:1}),
     response({ids:'cn123,ID_Data',limit:1,offset:1}),
-    response({ids:'id123,sg123',q:'telkomsel 5g',maxPrice:'2',maxDuration:'7',minDataGb:'2'}),
+    response({ids:'id123,sg123',q:'telkomsel 5g',maxPrice:'2.5',maxDuration:'7',minDataGb:'2'}),
   ]);
   assert.equal(fetches,1);
   assert.equal(first.body.total,2);
@@ -28,8 +28,9 @@ test('all group lookups share one supplier fetch and keep order, codes, search a
   assert.deepEqual(second.body.items.map(plan=>plan.id),['CN_Data']);
   assert.equal(second.body.hasMore,false);
   assert.deepEqual(third.body.items[0].operators,[{name:'Telkomsel',networkType:'5G'}]);
-  assert.equal(third.body.items[0].priceRaw,12345);
-  assert.equal(third.body.items[0].price,1.2345);
+  assert.equal(third.body.items[0].priceRaw,24690);
+  assert.equal((await response({ids:'id123',maxPrice:'2.4'})).body.total,0);
+  assert.equal(third.body.items[0].price,2.469);
   assert.equal((await response({ids:'sg123'})).cache,'hit');
   assert.equal(fetches,1);
 });
@@ -48,13 +49,13 @@ test('expired snapshots refresh in background once, and outage fallback ages out
   timestamp+=60_100;
   const first=await catalog.response(params);
   assert.equal(first.cache,'stale');
-  assert.equal(first.body.items[0].priceRaw,12345);
+  assert.equal(first.body.items[0].priceRaw,24690);
   await catalog.response(params);
   assert.equal(calls,2);
   const refreshed = catalog.warm();
   next.resolve([{...sample[0],price:17100}]);
   await refreshed;
-  assert.equal((await catalog.response(params)).body.items[0].priceRaw,17100);
+  assert.equal((await catalog.response(params)).body.items[0].priceRaw,34200);
   timestamp+=60_100;
   assert.equal((await catalog.response(params)).cache,'stale');
   const failed=catalog.warm();

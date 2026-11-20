@@ -18,7 +18,12 @@
       const {accounts} = await requestJson('/api/operations/accounts');
       list.replaceChildren(...accounts.map(account => {
         const row = document.createElement('li');
-        row.append(element('strong', account.name || account.email), element('span', account.email), element('small', `${account.admin ? '管理员' : '员工'} · ${account.enabled ? '启用' : '停用'}`));
+        row.append(element('strong', account.name || account.email), element('span', account.email), element('small', `${account.admin ? '管理员' : account.role === 'customer' ? '客户' : '员工'} · ${account.enabled ? '启用' : '停用'}`));
+        if (account.enabled) {
+          const credit = element('a','添加余额');
+          credit.href = '/__host/wallet?credit=' + encodeURIComponent(account.email) + '#admin';
+          row.append(credit);
+        }
         return row;
       }));
     };
