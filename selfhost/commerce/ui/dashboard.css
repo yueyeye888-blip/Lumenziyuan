@@ -440,3 +440,51 @@ main[data-lumen-wallet-view] > header > :has(> input) { visibility: hidden; }
   .lumen-market-category:not([data-category="esim"]) { padding: 14px; }
   .lumen-address-price { padding: 13px; gap: 10px; }
 }
+
+.lumen-esim-archive-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.lumen-esim-archive-views {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid #e1e8f3;
+  border-radius: 12px;
+  background: #edf2f9;
+  padding: 3px;
+}
+
+.lumen-esim-archive-views button,
+.lumen-esim-archive-action {
+  min-height: 38px;
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: #344d73;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.lumen-esim-archive-views button[aria-pressed="true"] {
+  background: #fff;
+  color: #1d3b72;
+  box-shadow: 0 1px 3px #132c5522;
+}
+
+.lumen-esim-archive-action {
+  border: 1px solid #cbd9eb;
+  background: #fff;
+}
+
+.lumen-esim-archive-action:hover:not(:disabled) {
+  background: #eef3fb;
+}
+
+.lumen-esim-archive-toolbar button:disabled { cursor: not-allowed; opacity: .58; }
+.lumen-esim-archive-toolbar button:focus-visible { outline: 2px solid #315c9f; outline-offset: 2px; }
+.lumen-esim-archive-feedback { flex-basis: 100%; color: #344d73; font-size: 13px; }

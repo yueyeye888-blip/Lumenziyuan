@@ -133,7 +133,7 @@ export function customerEsimRoute(method, pathname) {
 }
 
 const customerWorkbenchPost = new Set([
-  '/api/esim/export', '/api/esim/email', '/api/warehouse/resend', '/api/resources/status',
+  '/api/esim/archive', '/api/esim/export', '/api/esim/email', '/api/warehouse/resend', '/api/resources/status',
 ]);
 const customerWorkbenchGet = new Set([
   '/', '/favicon.svg', '/mail-delivery', '/api/session', '/api/esim/overview',

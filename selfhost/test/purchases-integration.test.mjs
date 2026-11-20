@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import { createEsimPurchases } from '../resource-operations/esim-purchases.mjs';
 import { createEsimSupplier } from '../resource-operations/esim-supplier.mjs';
 import { makeResourceOperations } from '../resource-operations/resource-operations.mjs';
+import { openEsimArchives } from '../resource-operations/esim-archives.mjs';
 import JSZip from '../resource-operations/jszip.cjs';
 
 const origin = 'https://test.example';
@@ -246,6 +247,32 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     assert.deepEqual(own.items.map(({profile})=>profile.esimTranNo),[cardCheck.data.cards[0].resourceId]);
     assert.deepEqual(queriedOrders.slice(queriedBefore),[selfService.data.order.orderNo]);
     assert.equal(own.partial,false);
+    const archivePath = '/api/esim/archive';
+    const overviewPath = '/api/esim/overview';
+    const archiveSelection = {ids:[resourceId],archived:true};
+    assert.equal((await request(archivePath,customer)).status,405);
+    assert.equal((await request(archivePath,customer,archiveSelection,'https://other.example')).status,403);
+    assert.equal((await request(archivePath,customer,{...archiveSelection,archived:'true'})).status,400);
+    assert.equal((await request(archivePath,customer,{...archiveSelection,ids:[resourceId,'invalid/id']})).status,400);
+    assert.equal((await request(archivePath,otherBuyer,archiveSelection)).status,403);
+    assert.equal((await request(archivePath,customer,{...archiveSelection,ids:[resourceId,owned[0].resource_id]})).status,403);
+    assert.equal((await request(overviewPath,customer)).data.history.items[0].archivedAt,null);
+    const archived = await request(archivePath,customer,archiveSelection);
+    assert.equal(archived.status,200,JSON.stringify(archived.data));
+    assert.deepEqual(archived.data.ids,[resourceId]);
+    assert.match(archived.data.archivedAt,/^\d{4}-\d{2}-\d{2}T.*Z$/);
+    const visibleArchive = (await request(overviewPath,customer)).data.history;
+    assert.equal(visibleArchive.total,1);
+    assert.equal(visibleArchive.items[0].archivedAt,archived.data.archivedAt);
+    assert.equal(visibleArchive.items[0].availabilityStatus,'temporary_unavailable');
+    assert.deepEqual((await request(overviewPath,otherBuyer)).data.history.items,[]);
+    const reopenedArchives = openEsimArchives(mailRoot);
+    try {
+      assert.equal(reopenedArchives.list(customer.id).get(resourceId),archived.data.archivedAt);
+      assert.equal(reopenedArchives.list(otherBuyer.id).size,0);
+    } finally {
+      reopenedArchives.close();
+    }
     const emailPath = '/api/esim/email';
     const delivery = {ids:[resourceId],recipient:'buyer-inbox@example.invalid',requestId:randomUUID()};
     const notOwned = await request(emailPath,customer,{...delivery,ids:[resourceId,owned[0].resource_id]});
@@ -262,6 +289,9 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     assert.ok(sheet.includes(resourceId) && !sheet.includes(owned[0].resource_id));
     assert.equal((await request(emailPath,otherBuyer,delivery)).status,403);
     assert.equal(sentWorkbooks.length,1);
+    assert.deepEqual(await request(archivePath,customer,{ids:[resourceId],archived:false}),
+      {status:200,data:{ids:[resourceId],archivedAt:null}});
+    assert.equal((await request(overviewPath,customer)).data.history.items[0].archivedAt,null);
     // Simulate a process exit after the balance hold and before a vendor request;
     // an accepted order with an interrupted local settlement must be replayed once.
     const beforeRestart=funds.balance(customer.id);

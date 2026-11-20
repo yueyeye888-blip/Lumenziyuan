@@ -88,6 +88,7 @@ type ResourceGroup = {
 };
 
 type PurchaseHistoryItem = {
+  archivedAt?: string | null;
   availabilityStatus?: string;
   availabilityNote?: string | null;
   availabilityRecheckAt?: string | null;
@@ -924,7 +925,20 @@ export default function Home() {
             loadMore={() => setCatalogOffset((offset) => offset + 100)}
           />
         )}
-        {view === "history" && <HistoryView overview={overview} />}
+        {view === "history" && (
+          <HistoryView overview={overview} onArchiveUpdated={(ids, archivedAt) => {
+            const updated = new Set(ids);
+            setOverview((current) => current.history ? {
+              ...current,
+              history: {
+                ...current.history,
+                items: current.history.items.map((item) => updated.has(item.esimTranNo)
+                  ? { ...item, archivedAt }
+                  : item),
+              },
+            } : current);
+          }} />
+        )}
         {view === "warehouse" && viewer && <WarehouseView />}
         {view === "samples" && <SupplierTemplateLibrary key="address-generator" selectionMode initialTemplateId={addressTemplateId} onChooseTemplate={setAddressTemplateId} />}
         {view === "templates" && <SupplierTemplateLibrary key="global-library" onChooseTemplate={(id) => { setAddressTemplateId(id); setView("samples"); }} />}
@@ -1685,7 +1699,10 @@ function ResourceStatusPicker({
   );
 }
 
-function HistoryView({ overview }: { overview: PlatformOverview }) {
+function HistoryView({ overview, onArchiveUpdated }: {
+  overview: PlatformOverview;
+  onArchiveUpdated: (ids: string[], archivedAt: string | null) => void;
+}) {
   const isCustomer = overview.viewer?.role === "customer";
   const items = overview.history?.items || [];
   const isAdmin = Boolean(overview.viewer?.isAdmin);
@@ -1694,6 +1711,9 @@ function HistoryView({ overview }: { overview: PlatformOverview }) {
   const [renewTargets, setRenewTargets] = useState<PurchaseHistoryItem[]>([]);
   const [status, setStatus] = useState("all");
   const [resourceQuery, setResourceQuery] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+  const [archivePending, setArchivePending] = useState(false);
+  const [archiveFeedback, setArchiveFeedback] = useState("");
   const [notice, setNotice] = useState("");
   const [statusTarget, setStatusTarget] = useState<ResourceStatusTarget | null>(
     null,
@@ -1715,7 +1735,9 @@ function HistoryView({ overview }: { overview: PlatformOverview }) {
         }
       : item;
   });
-  const visibleItems = decoratedItems.filter((item) => {
+  const currentItems = decoratedItems.filter((item) => !item.archivedAt);
+  const viewItems = showArchived ? decoratedItems.filter((item) => item.archivedAt) : currentItems;
+  const visibleItems = viewItems.filter((item) => {
     const matchesStatus =
       status === "all" ||
       (status === "temporary_unavailable"
@@ -1725,7 +1747,9 @@ function HistoryView({ overview }: { overview: PlatformOverview }) {
             item.availabilityStatus !== "temporary_unavailable"
           : status === "expiring"
             ? (daysUntil(item.expiredTime) ?? 999) <= 30
-            : item.esimStatus === status);
+            : status === "USED_EXPIRED"
+              ? ["USED_EXPIRED", "UNUSED_EXPIRED"].includes(item.esimStatus)
+              : item.esimStatus === status);
     const haystack =
       `${item.packageName} ${item.orderNo} ${item.esimTranNo} ${item.iccid || ""} ${item.msisdn || ""} ${item.locationCode || ""}`.toLowerCase();
     return (
@@ -1734,18 +1758,19 @@ function HistoryView({ overview }: { overview: PlatformOverview }) {
         haystack.includes(resourceQuery.trim().toLowerCase()))
     );
   });
-  const renewableItems = decoratedItems.filter(
+  const renewableItems = currentItems.filter(
     (item) => item.iccid && (daysUntil(item.expiredTime) ?? 1) >= 0,
   );
-  const expiringItems = decoratedItems.filter((item) => {
+  const expiringItems = currentItems.filter((item) => {
     const days = daysUntil(item.expiredTime);
     return days !== null && days >= 0 && days <= 30;
   });
-  const unavailableItems = decoratedItems.filter(
+  const unavailableItems = currentItems.filter(
     (item) => item.availabilityStatus === "temporary_unavailable",
   );
-  const selectedItems = decoratedItems.filter((item) =>
-    selected.includes(item.esimTranNo),
+  const selectedSet = new Set(selected);
+  const selectedItems = visibleItems.filter((item) =>
+    selectedSet.has(item.esimTranNo),
   );
   const toggleSelected = (id: string) =>
     setSelected((current) =>
@@ -1754,11 +1779,43 @@ function HistoryView({ overview }: { overview: PlatformOverview }) {
         : [...current, id],
     );
   const toggleAll = () =>
-    setSelected((current) =>
-      current.length === visibleItems.length
-        ? []
-        : visibleItems.map((item) => item.esimTranNo),
+    setSelected(
+      selectedItems.length === visibleItems.length ? [] : visibleItems.map((item) => item.esimTranNo),
     );
+  function switchArchiveView(archived: boolean) {
+    if (archived === showArchived) return;
+    setShowArchived(archived);
+    setStatus("all");
+    setResourceQuery("");
+    setSelected([]);
+    setArchiveFeedback("");
+  }
+  async function updateArchive() {
+    if (archivePending || !selectedItems.length) return;
+    const ids = selectedItems.map((item) => item.esimTranNo);
+    const fallback = "无法更新归档状态，请重试。";
+    setArchivePending(true);
+    setArchiveFeedback("正在更新归档状态…");
+    try {
+      const response = await fetch("/api/esim/archive", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ids, archived: !showArchived }),
+      });
+      const result = await response.json() as { ids: string[]; archivedAt: string | null; error?: string };
+      if (!response.ok) {
+        setArchiveFeedback(result.error || fallback);
+        return;
+      }
+      onArchiveUpdated(result.ids, result.archivedAt);
+      setSelected([]);
+      setArchiveFeedback(showArchived ? `已恢复 ${result.ids.length} 张 eSIM。` : `已归档 ${result.ids.length} 张 eSIM。`);
+    } catch {
+      setArchiveFeedback(fallback);
+    } finally {
+      setArchivePending(false);
+    }
+  }
   const notify = (message: string) => {
     setNotice(message);
     window.setTimeout(() => setNotice(""), 4200);
@@ -1828,7 +1885,7 @@ function HistoryView({ overview }: { overview: PlatformOverview }) {
       ) : (
         <section className="mb-5 flex flex-wrap gap-x-6 gap-y-2 rounded-2xl border border-[#e5e9f0] bg-white px-5 py-4 text-sm">
           <span>
-            <strong className="text-[#294d88]">{items.length}</strong>{" "}
+            <strong className="text-[#294d88]">{currentItems.length}</strong>{" "}
             个我的资源
           </span>
           <span>
@@ -1845,6 +1902,23 @@ function HistoryView({ overview }: { overview: PlatformOverview }) {
           )}
         </section>
       )}
+      <section className="lumen-esim-archive-toolbar">
+        <div className="lumen-esim-archive-views" role="group" aria-label="eSIM 归档视图">
+          <button type="button" data-esim-archive-view="current" aria-pressed={!showArchived} disabled={archivePending} onClick={() => switchArchiveView(false)}>当前资源</button>
+          <button type="button" data-esim-archive-view="archived" aria-pressed={showArchived} disabled={archivePending} onClick={() => switchArchiveView(true)}>已归档</button>
+        </div>
+        <button
+          type="button"
+          className="lumen-esim-archive-action"
+          data-esim-archive-action={showArchived ? "restore" : "archive"}
+          disabled={archivePending || !selectedItems.length}
+          onClick={() => void updateArchive()}
+        >
+          {showArchived ? "恢复所选" : "归档所选"}
+          {selectedItems.length ? ` (${selectedItems.length})` : ""}
+        </button>
+        <p className="lumen-esim-archive-feedback" role="status" hidden={!archiveFeedback}>{archiveFeedback}</p>
+      </section>
       <section className="mb-4 flex flex-col gap-3 rounded-2xl border border-[#e3e8f0] bg-white p-4 md:flex-row md:items-end">
         <label className="flex-1">
           <span className="mb-1.5 block text-[10px] uppercase tracking-wider text-slate-400">
@@ -1857,7 +1931,7 @@ function HistoryView({ overview }: { overview: PlatformOverview }) {
             />
             <input
               value={resourceQuery}
-              onChange={(event) => setResourceQuery(event.target.value)}
+              onChange={(event) => { setResourceQuery(event.target.value); setSelected([]); }}
               placeholder="套餐、订单号、ICCID、手机号…"
               className="h-10 w-full rounded-xl border border-slate-200 bg-[#f8fafc] pl-9 pr-3 text-xs outline-none focus:border-[#87a3d9]"
             />
@@ -1865,7 +1939,7 @@ function HistoryView({ overview }: { overview: PlatformOverview }) {
         </label>
         <FilterSelect
           value={status}
-          onChange={setStatus}
+          onChange={(next) => { setStatus(next); setSelected([]); }}
           label="资源状态"
           options={[
             { value: "all", label: "全部状态" },
@@ -1891,10 +1965,12 @@ function HistoryView({ overview }: { overview: PlatformOverview }) {
       />}
       <PurchaseTable
         items={visibleItems}
-        total={overview.history?.total || 0}
+        total={viewItems.length}
+        emptyText={viewItems.length ? "没有符合筛选条件的 eSIM。" : showArchived ? "暂无已归档的 eSIM。" : "当前没有未归档的 eSIM。"}
         selected={selected}
         toggleSelected={toggleSelected}
         toggleAll={toggleAll}
+        selectingDisabled={archivePending}
         onDetail={setDetail}
         onRenew={(item) => setRenewTargets([item])}
         manageable
@@ -2857,24 +2933,29 @@ function TelegramConfigModal({
 function PurchaseTable({
   items,
   total,
+  emptyText = "没有找到符合条件的已购资源",
   compact = false,
   manageable = false,
   selected = [],
   toggleSelected,
   toggleAll,
+  selectingDisabled = false,
   onDetail,
   onRenew,
 }: {
   items: PurchaseHistoryItem[];
   total: number;
+  emptyText?: string;
   compact?: boolean;
   manageable?: boolean;
   selected?: string[];
   toggleSelected?: (id: string) => void;
   toggleAll?: () => void;
+  selectingDisabled?: boolean;
   onDetail?: (item: PurchaseHistoryItem) => void;
   onRenew?: (item: PurchaseHistoryItem) => void;
 }) {
+  const selectedIds = new Set(selected);
   return (
     <div className="rounded-[20px] border border-[#e5e9f0] bg-white p-5 shadow-[0_4px_24px_rgba(28,48,82,.04)] md:p-7">
       <div className="mb-5 flex items-center justify-between">
@@ -2898,7 +2979,8 @@ function PurchaseTable({
                 <th className="w-10 pb-3">
                   <input
                     type="checkbox"
-                    checked={!!items.length && selected.length === items.length}
+                    checked={!!items.length && items.every((item) => selectedIds.has(item.esimTranNo))}
+                    disabled={selectingDisabled || !items.length}
                     onChange={toggleAll}
                     aria-label="全选资源"
                     className="h-4 w-4 accent-[#315c9f]"
@@ -2917,20 +2999,22 @@ function PurchaseTable({
           </thead>
           <tbody>
             {items.length ? (
-              items.slice(0, compact ? 6 : 50).map((item) => {
+              items.slice(0, compact ? 6 : items.length).map((item) => {
                 const remainingDays = daysUntil(item.expiredTime);
                 const renewable =
                   Boolean(item.iccid) && (remainingDays ?? 1) >= 0;
                 return (
                   <tr
                     key={item.esimTranNo}
+                    data-lumen-esim-id={item.esimTranNo}
                     className="border-b border-slate-50 last:border-0"
                   >
                     {manageable && (
                       <td className="py-4">
                         <input
                           type="checkbox"
-                          checked={selected.includes(item.esimTranNo)}
+                          checked={selectedIds.has(item.esimTranNo)}
+                          disabled={selectingDisabled}
                           onChange={() => toggleSelected?.(item.esimTranNo)}
                           aria-label={`选择 ${item.packageName}`}
                           className="h-4 w-4 accent-[#315c9f]"
@@ -3024,7 +3108,7 @@ function PurchaseTable({
                   colSpan={manageable ? 7 : 5}
                   className="py-12 text-center text-sm text-slate-500"
                 >
-                  没有找到符合条件的已购资源
+                  {emptyText}
                 </td>
               </tr>
             )}

@@ -6,8 +6,11 @@ import { webcrypto } from 'node:crypto';
 import { trustedHeaders } from './auth.mjs';
 import { makeEsimWorkbook } from './esim-export.mjs';
 import { openEsimMailLog, normalizeRecipient } from './esim-mail-log.mjs';
+import { openEsimArchives } from './esim-archives.mjs';
 import { maxWorkbookBytes } from '../outlook-mail.mjs';
 
+const isEsimId = id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id);
+const archiveBatchLimit = 10_000;
 const day = 86_400_000;
 const pollInterval = 30 * 60_000;
 const lastDate = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Singapore' });
@@ -68,6 +71,7 @@ const statusForMail = {
 
 export function makeResourceOperations({ root, config, mf, identities, readBody, outlook, purchases, wallet }) {
   const bindings = config.bindings || {};
+  const archiveOrigins = new Set([config.origin, ...(config.aliasOrigins || [])]);
   const admins = new Set(String(bindings.RESOURCE_ADMIN_EMAILS || '').split(',').map(email => email.trim().toLowerCase()).filter(Boolean));
   const admin = user => user.role !== 'customer' && admins.has(user.email.toLowerCase());
   const json = (res, code, value) => { res.writeHead(code, { 'content-type':'application/json; charset=utf-8','cache-control':'private, no-store' }); res.end(JSON.stringify(value)); };
@@ -76,6 +80,7 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
   let checking = false;
   const exports = new Set();
   const mailLog = openEsimMailLog(root);
+  const archives = openEsimArchives(root);
 
   async function overview(user) {
     const viewer = viewerFor(config,user);
@@ -128,7 +133,34 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       const quota = await purchases.summary(user).catch(() => undefined);
       if (quota) data.esimQuota = quota;
       await purchases.reconcile(user,data.history?.items).catch(() => {});
+      if (Array.isArray(data.history?.items)) {
+        const archived = archives.list(user.id);
+        data.history.items = data.history.items.map(item => ({...item, archivedAt:archived.get(item.esimTranNo) ?? null}));
+      }
       json(res,status,data); return true;
+    }
+    if (url.pathname === '/api/esim/archive') {
+      if (req.method !== 'POST') { json(res,405,{error:'请求方式不支持。'}); return true; }
+      if (!archiveOrigins.has(req.headers.origin) || !/^application\/json\b/i.test(req.headers['content-type'] || '')) {
+        json(res,403,{error:'请求来源不匹配。'}); return true;
+      }
+      let fields;
+      try { fields = JSON.parse(await readBody(req,700_000)); } catch {}
+      if (!Array.isArray(fields?.ids) || !fields.ids.length || fields.ids.length > archiveBatchLimit
+        || !fields.ids.every(isEsimId) || typeof fields.archived !== 'boolean') {
+        json(res,400,{error:'请勾选要归档或恢复的 eSIM，单次最多 10,000 张。'}); return true;
+      }
+      const ids = [...new Set(fields.ids)];
+      const result = await overview(user).catch(() => null);
+      if (result?.status !== 200 || !Array.isArray(result.data.history?.items)) {
+        json(res,502,{error:'暂时无法同步已购资源，请稍后重试。'}); return true;
+      }
+      const visible = new Set(result.data.history.items.map(item => item.esimTranNo));
+      if (!ids.every(id => visible.has(id))) {
+        json(res,403,{error:'所选资源已变更或当前账号无权访问。请刷新后重试。'}); return true;
+      }
+      const archivedAt = archives.set(user.id,ids,fields.archived);
+      json(res,200,{ids,archivedAt}); return true;
     }
     if (req.method === 'GET' && url.pathname === '/api/mail-deliveries') {
       const {status,data} = await mailRecords(user); json(res,status,data); return true;
@@ -188,7 +220,7 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
     if (req.method !== 'POST' || req.headers.origin !== config.origin) { json(res,405,{error:'请求方式不支持'}); return true; }
     let ids, recipient, requestId;
     try { ({ids,recipient,requestId} = JSON.parse(await readBody(req, 80_000))); } catch { json(res,400,{error:'资源选择无效'}); return true; }
-    if (!Array.isArray(ids) || !ids.length || ids.length > 1000 || ids.some(id => typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id))) { json(res,400,{error:'请勾选要导出的资源，单次最多 1,000 张。'}); return true; }
+    if (!Array.isArray(ids) || !ids.length || ids.length > 1000 || !ids.every(isEsimId)) { json(res,400,{error:'请勾选要导出的资源，单次最多 1,000 张。'}); return true; }
     const requested = new Set(ids);
     let sendKey;
     if (email) {
@@ -277,5 +309,5 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
     progress.nextCheckAt = new Date(Date.now() + pollInterval).toISOString();
     void checkReminders({send:true});
   },pollInterval);
-  return { route, close() { clearTimeout(initial); clearInterval(timer); mailLog.close(); } };
+  return { route, close() { clearTimeout(initial); clearInterval(timer); archives.close(); mailLog.close(); } };
 }
