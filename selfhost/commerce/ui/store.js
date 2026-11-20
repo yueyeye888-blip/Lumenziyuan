@@ -35,6 +35,13 @@ const statusText = {
 };
 const date = (s) => new Date(s).toLocaleString('zh-CN', { hour12: false });
 function message(text, error = false) {
+  const feedback = document.querySelector('dialog[open] .modal-feedback');
+  if (feedback) {
+    feedback.textContent = text;
+    feedback.hidden = !text;
+    feedback.classList.toggle('problem', error);
+    return;
+  }
   $('notice').textContent = text;
   $('notice').classList.toggle('problem', error);
   if (error) $('notice').scrollIntoView({ block: 'nearest' });
@@ -142,18 +149,67 @@ let wallet,
   offset = 0,
   hasNext = false,
   templates = [];
-const invoiceLabels = (o) => [
-  statusText[o.status] || o.status,
-  o.network + ' · 应付 ' + o.expectedAmount + ' USDT · 入账 ' + o.amount + ' U',
-];
+const view = location.pathname.split('/').pop();
+let historyOrders = [];
+function ledgerTable(container, headers, rows, placeholder) {
+  container.replaceChildren();
+  if (!rows.length) {
+    container.append(elem('p', placeholder, 'empty-state'));
+    return;
+  }
+  const table = elem('table', undefined, 'billing-table'),
+    head = table.createTHead().insertRow();
+  for (const title of headers) {
+    const cell = elem('th', title);
+    cell.scope = 'col';
+    head.append(cell);
+  }
+  const body = table.createTBody();
+  for (const values of rows) {
+    const tr = body.insertRow();
+    for (const value of values)
+      tr.insertCell().append(value instanceof Node ? value : document.createTextNode(String(value)));
+  }
+  container.append(table);
+}
+function selectHistory(key) {
+  for (const tab of ['entries', 'deposits']) {
+    $('show-' + tab).setAttribute('aria-pressed', String(tab === key));
+    $(tab).hidden = tab !== key;
+  }
+}
+for (const tab of ['entries', 'deposits']) $('show-' + tab).onclick = () => selectHistory(tab);
+$('recharge').onclick = () => {
+  $('deposit-dialog').querySelector('.modal-feedback').hidden = true;
+  $('deposit-dialog').showModal();
+};
+document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => $(b.dataset.close).close()));
+document.querySelectorAll('[data-amount]').forEach(
+  (b) =>
+    (b.onclick = () => {
+      $('deposit-form').elements.amount.value = b.dataset.amount;
+      $('deposit-form').elements.amount.dispatchEvent(new Event('input'));
+    }),
+);
+$('deposit-form').elements.amount.oninput = () => {
+  for (const b of document.querySelectorAll('[data-amount]'))
+    b.setAttribute('aria-pressed', String(b.dataset.amount === $('deposit-form').elements.amount.value));
+};
+$('deposit-form').elements.amount.oninput();
 async function loadWallet() {
   wallet = await api('/api/commerce/wallet');
   $('account').textContent = wallet.email;
   $('workspace').hidden = wallet.role === 'customer';
+  $('staff-admin-link').hidden = !wallet.canManageAccounts;
+  $('review-link').hidden = wallet.role !== 'admin';
+  if (view !== 'wallet') return;
   $('balance').textContent = money(wallet.availableRaw).replace(' U', '');
   $('held').textContent = '订单预留 ' + money(wallet.heldRaw);
-  const select = $('deposit-form').elements.network,
-    sel = select.value;
+  $('held').hidden = !wallet.heldRaw;
+  const rechargeAllowed = wallet.role !== 'employee',
+    select = $('deposit-form').elements.network,
+    previous = select.value;
+  $('recharge').hidden = !rechargeAllowed;
   select.replaceChildren();
   for (const n of wallet.networks) {
     const o = new Option(n.label + (n.enabled ? '' : '（暂不可用）'), n.id);
@@ -161,35 +217,37 @@ async function loadWallet() {
     select.add(o);
   }
   select.value =
-    wallet.networks.find((n) => n.id === sel && n.enabled)?.id || wallet.networks.find((n) => n.enabled)?.id || '';
-  $('deposit-form').querySelector('button').disabled = !select.value;
-  const ledger = $('entries');
-  ledger.replaceChildren();
-  for (const e of wallet.entries)
-    row(ledger, (e.delta > 0 ? '+' : '') + money(e.delta), e.note + ' · ' + date(e.createdAt));
-  empty(ledger, '暂无余额变动');
-  $('admin').hidden = wallet.role !== 'admin';
-  const target = new URL(location.href).searchParams.get('credit');
-  if (wallet.role === 'admin' && target && !$('credit-form').dataset.initialized) {
-    $('credit-form').elements.email.value = target;
-    $('credit-form').dataset.initialized = 'true';
-    $('admin').scrollIntoView({block:'start'});
-  }
+    wallet.networks.find((n) => n.id === previous && n.enabled)?.id ||
+    wallet.networks.find((n) => n.enabled)?.id ||
+    '';
+  $('deposit-form').querySelector('[type=submit]').disabled = !select.value;
+  ledgerTable(
+    $('entries'),
+    ['时间', '交易说明', '变动金额'],
+    wallet.entries.map((e) => [
+      date(e.createdAt),
+      e.note,
+      elem('strong', (e.delta > 0 ? '+' : '') + money(e.delta), e.delta > 0 ? 'positive' : 'numeric'),
+    ]),
+    '暂无余额明细',
+  );
 }
 async function loadDeposits() {
-  const { orders } = await api('/api/commerce/deposits'),
-    n = $('deposits');
-  n.replaceChildren();
-  for (const o of orders) {
-    const [s, info] = invoiceLabels(o);
-    row(
-      n,
-      s,
-      info + ' · ' + date(o.createdAt),
-      button('查看', () => openInvoice(o.id, true)),
-    );
-  }
-  empty(n, '暂无充值记录');
+  const { orders } = await api('/api/commerce/deposits');
+  historyOrders = orders;
+  $('show-deposits').hidden = wallet.role === 'employee' && !orders.length;
+  ledgerTable(
+    $('deposits'),
+    ['创建时间', '充值网络', '入账金额', '状态', ''],
+    orders.map((o) => [
+      date(o.createdAt),
+      o.network,
+      money((o.creditedAmount ?? o.amount) * 10000),
+      elem('span', statusText[o.status] || o.status, 'state state-' + o.status),
+      button('详情', () => openInvoice(o.id, true)),
+    ]),
+    '暂无充值记录',
+  );
   return orders;
 }
 function countdown() {
@@ -200,14 +258,13 @@ function countdown() {
     : '付款时间已结束，请等待链上核对';
 }
 function displayInvoice(o) {
-  $('invoice').hidden = false;
   invoiceId = o.id;
   invoiceExpiry = o.expiresAt;
   const n = $('invoice-data');
   n.replaceChildren();
-  const [s] = invoiceLabels(o);
+  const s = statusText[o.status] || o.status;
   n.append(
-    elem('p', o.network + ' · ' + s),
+    elem('p', o.network + ' · ' + s, 'invoice-status'),
     elem('strong', (o.status === 'credited' ? '已入账 ' : '入账余额 ') + (o.creditedAmount ?? o.amount) + ' U'),
   );
   if (o.status === 'pending' && Date.parse(o.expiresAt) > Date.now()) {
@@ -251,11 +308,14 @@ function displayInvoice(o) {
   if (o.txHash) n.append(elem('p', '交易哈希'), elem('code', o.txHash));
   n.dataset.state = o.status;
 }
-async function openInvoice(id, scroll = false) {
+async function openInvoice(id, show = false) {
   const { order } = await api('/api/commerce/deposit?id=' + encodeURIComponent(id));
   const old = $('invoice-data').dataset.state;
   displayInvoice(order);
-  if (scroll) $('invoice').scrollIntoView({ block: 'center' });
+  if (show && !$('invoice').open) {
+    $('invoice').querySelector('.modal-feedback').hidden = true;
+    $('invoice').showModal();
+  }
   if (old && old !== order.status) await Promise.all([loadWallet(), loadDeposits()]);
 }
 form('deposit-form', async (f) => {
@@ -263,23 +323,16 @@ form('deposit-form', async (f) => {
   const { order } = await api('/api/commerce/deposits', { ...f, requestId: keyFor(key) });
   clearKey(key);
   displayInvoice(order);
+  $('deposit-dialog').close();
+  $('invoice').querySelector('.modal-feedback').hidden = true;
+  $('invoice').showModal();
+  selectHistory('deposits');
   await loadDeposits();
-  $('invoice').scrollIntoView({ block: 'center' });
 });
 form('pin-form', async (f, el) => {
   await api('/api/settings/security', f);
   el.reset();
   message('支付密码已更新。');
-});
-form('credit-form', async (f, el) => {
-  const ok = await ask('给 ' + f.email + ' 添加 ' + f.amount + ' U', [elem('p', '备注：' + f.note)]);
-  if (!ok) return;
-  const k = 'credit:' + f.email + ':' + f.amount + ':' + f.note;
-  const r = await api('/api/commerce/admin/credit', { ...f, requestId: keyFor(k) });
-  clearKey(k);
-  el.reset();
-  await loadWallet();
-  message(r.email + ' 当前可用余额 ' + money(r.availableRaw));
 });
 async function admin() {
   const r = await api('/api/commerce/admin/deposits');
@@ -363,10 +416,16 @@ $('next').onclick = () =>
       await catalog();
     }
   });
+async function needsPin(quote) {
+  if (quote.pinConfigured !== false) return false;
+  const next = await ask('设置支付密码', [elem('p', '购买前请先为账户设置六位支付密码。')]);
+  if (next) location.assign('/__host/security');
+  return true;
+}
 async function buy(p) {
   const q = await api('/api/esim/purchase-quote', { ids: [p.id] });
   if (q.pending) throw Error('你有一笔订单正在核对，请查看我的订单。');
-  if (!q.pinConfigured) throw Error('请先到「我的钱包」设置六位支付密码。');
+  if (await needsPin(q)) return;
   const line = q.lines[0];
   const count = inputField('数量', 'count', {
     type: 'number',
@@ -431,6 +490,7 @@ async function ordersDetail(o) {
 }
 async function renew(c) {
   const q = await api('/api/esim/renewal-quote', { ids: [c.resourceId] });
+  if (await needsPin(q)) return;
   const card = q.cards?.[0];
   if (!card?.options?.length) throw Error(card?.reason || '当前没有可续费方案。');
   const opts = card.options.map((x) => [x.code, x.name + ' · ' + money(x.priceRaw)]);
@@ -520,7 +580,13 @@ form('address-form', async (f, el) => {
   }
   clearKey(k);
   el.reset();
-  message('订单已提交：' + r.requestNo);
+  const receipt =
+    r.paymentStatus === 'refunded'
+      ? '订单未完成，10 U 已退回余额。'
+      : r.paymentStatus === 'reserved'
+        ? '原订单已预留 10 U。'
+        : '已支付 10 U。';
+  message(receipt + '订单号 ' + r.requestNo);
   await Promise.all([loadOrders(), loadWallet()]);
 });
 async function digest(t) {
@@ -530,29 +596,63 @@ async function digest(t) {
 }
 (async () => {
   try {
-    const shop = location.pathname.endsWith('/shop');
-    $('title').textContent = shop ? '资源市场' : '我的钱包';
-    document.title = $('title').textContent + ' · Lumen';
-    $(shop ? 'shop' : 'wallet').hidden = false;
-    for (const a of document.querySelectorAll('header nav a'))
+    const title = { shop: '资源市场', wallet: '我的钱包', security: '支付密码', 'payment-review': '收款核对' }[
+      view
+    ];
+    $('title').textContent = title;
+    document.title = title + ' · Lumen';
+    $(view).hidden = false;
+    for (const a of document.querySelectorAll('header nav a, .profile-menu a')) {
       if (a.pathname === location.pathname) a.setAttribute('aria-current', 'page');
-    await loadWallet();
-    if (shop) {
-      await Promise.all([catalog(), loadOrders()]);
-    } else {
-      const arr = await loadDeposits();
-      const active = arr.find((o) => ['pending', 'confirming'].includes(o.status));
-      if (active) displayInvoice(active);
-      if (wallet.role === 'admin') await admin();
     }
+    await loadWallet();
+    if (view === 'shop') await Promise.all([catalog(), loadOrders()]);
+    if (view === 'wallet') {
+      const oldCredit = new URL(location.href).searchParams.get('credit');
+      if (wallet.canManageAccounts && oldCredit) {
+        location.replace('/__host/accounts?credit=' + encodeURIComponent(oldCredit));
+        return;
+      }
+      const orders = await loadDeposits();
+      if (orders.some((o) => o.status === 'pending' || o.status === 'confirming')) selectHistory('deposits');
+    }
+    if (view === 'payment-review') await admin();
   } catch (e) {
     message(e.message, true);
   }
 })();
 setInterval(countdown, 1000);
 let polling = false;
+let refreshHistoryAt = 0;
 setInterval(async () => {
-  if (document.hidden || polling || !invoiceId || ['credited', 'review'].includes($('invoice-data').dataset.state))
+  if (
+    view === 'wallet' &&
+    wallet &&
+    !polling &&
+    !document.hidden &&
+    !$('invoice').open &&
+    !document.querySelector('dialog[open]') &&
+    Date.now() >= refreshHistoryAt &&
+    historyOrders.some((o) => ['pending', 'confirming'].includes(o.status))
+  ) {
+    refreshHistoryAt = Date.now() + 20000;
+    polling = true;
+    try {
+      await Promise.all([loadWallet(), loadDeposits()]);
+    } catch (e) {
+      message(e.message, true);
+    } finally {
+      polling = false;
+    }
+    return;
+  }
+  if (
+    document.hidden ||
+    polling ||
+    !$('invoice').open ||
+    !invoiceId ||
+    ['credited', 'review', 'expired'].includes($('invoice-data').dataset.state)
+  )
     return;
   polling = true;
   try {

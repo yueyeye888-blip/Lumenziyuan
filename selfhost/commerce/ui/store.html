@@ -11,61 +11,83 @@
     <header>
       <div class="wrap bar">
         <a class="brand" href="/"><b>L</b> Lumen 资源中心</a>
-        <nav>
+        <nav aria-label="主导航">
           <a href="/__host/shop">资源市场</a><a href="/__host/wallet">我的钱包</a
-          ><a href="/" id="workspace" hidden>员工工作台</a>
+          ><a href="/__host/accounts" id="staff-admin-link" hidden>员工与额度</a>
+          <a href="/" id="workspace" hidden>员工工作台</a>
         </nav>
-        <a class="exit" href="/signout-with-chatgpt">退出</a>
+        <details class="profile-menu">
+          <summary>账户</summary>
+          <div>
+            <p id="account"></p>
+            <a href="/__host/security">支付密码</a
+            ><a id="review-link" href="/__host/payment-review" hidden>收款核对</a>
+            <a href="/signout-with-chatgpt">退出登录</a>
+          </div>
+        </details>
       </div>
     </header>
     <main class="wrap">
-      <p class="account" id="account"></p>
       <h1 id="title">我的钱包</h1>
       <p id="notice" role="status" aria-live="polite"></p>
       <div id="wallet" hidden>
-        <div class="grid">
-          <section class="balance">
+        <section class="wallet-balance" aria-label="可用余额">
+          <div>
             <h2>可用余额</h2>
-            <strong id="balance">—</strong> U
-            <p id="held"></p>
-            <a href="#ledger">查看余额明细</a>
-          </section>
-          <section>
-            <h2>充值 USDT</h2>
-            <form id="deposit-form">
-              <label>充值网络<select name="network" required></select></label
-              ><label
-                >入账金额（U）<input name="amount" type="number" step="1" min="5" value="50" required
-              /></label>
-              <p class="hint">最低充值 5 U。创建订单后，请按页面显示的精确金额转账。</p>
-              <button>获取收款二维码</button>
-            </form>
-          </section>
-        </div>
-        <section id="invoice" hidden>
-          <h2>充值付款</h2>
+            <div class="balance-number"><strong id="balance">—</strong><span>U</span></div>
+            <p class="held" id="held" hidden></p>
+          </div>
+          <button id="recharge" type="button" hidden>充值 USDT</button>
+        </section>
+        <section class="history">
+          <div class="history-tabs" aria-label="选择账单类型">
+            <button type="button" id="show-entries" aria-pressed="true">余额明细</button>
+            <button type="button" id="show-deposits" aria-pressed="false" hidden>充值记录</button>
+          </div>
+          <div class="table-wrap" id="entries"></div>
+          <div class="table-wrap" id="deposits" hidden></div>
+        </section>
+        <dialog id="deposit-dialog" aria-labelledby="deposit-title">
+          <div class="dialog-head">
+            <h2 id="deposit-title">充值 USDT</h2>
+            <button type="button" data-close="deposit-dialog" aria-label="关闭">×</button>
+          </div>
+          <form id="deposit-form">
+            <label>入账金额（U）<input name="amount" type="number" step="1" min="5" value="50" required /></label>
+            <div class="presets" aria-label="常用充值金额">
+              <button type="button" data-amount="5">5 U</button><button type="button" data-amount="20">20 U</button
+              ><button type="button" data-amount="50">50 U</button
+              ><button type="button" data-amount="100">100 U</button>
+            </div>
+            <label>支付网络<select name="network" required></select></label>
+            <p class="hint">最低 5 U。请按下一步显示的精确金额转账。</p>
+            <p class="modal-feedback" role="status" hidden></p>
+            <button type="submit">获取收款二维码</button>
+          </form>
+        </dialog>
+        <dialog id="invoice" aria-labelledby="invoice-title">
+          <div class="dialog-head">
+            <h2 id="invoice-title">充值详情</h2>
+            <button type="button" data-close="invoice" aria-label="关闭">×</button>
+          </div>
           <div id="invoice-data"></div>
-        </section>
-        <section>
-          <h2>充值记录</h2>
-          <div id="deposits"></div>
-        </section>
-        <section id="ledger">
-          <h2>余额明细</h2>
-          <div id="entries"></div>
-        </section>
-        <section>
-          <h2>支付密码</h2>
+          <p class="modal-feedback" role="status" hidden></p>
+        </dialog>
+      </div>
+      <div id="security" hidden>
+        <section class="settings-card">
           <form id="pin-form">
             <label
-              >原支付密码（首次设置可留空）<input
+              >原支付密码<input
                 name="currentPin"
                 type="password"
                 pattern="[0-9]{6}"
                 maxlength="6"
                 inputmode="numeric"
-                autocomplete="off" /></label
-            ><label
+                autocomplete="off"
+              /><small>首次设置可留空</small></label
+            >
+            <label
               >新的六位支付密码<input
                 name="newPin"
                 type="password"
@@ -73,19 +95,19 @@
                 maxlength="6"
                 inputmode="numeric"
                 autocomplete="new-password"
-                required /></label
-            ><button>设置支付密码</button>
+                required
+            /></label>
+            <button>保存支付密码</button>
           </form>
         </section>
-        <section id="admin" hidden>
-          <h2>为账号添加余额</h2>
-          <form id="credit-form">
-            <label>账号邮箱<input name="email" type="email" required /></label
-            ><label>入账金额（U）<input type="number" min="0.0001" step="0.0001" name="amount" required /></label
-            ><label>入账备注<input name="note" maxlength="180" required /></label><button>核对并添加余额</button>
-          </form>
-          <h3>收款网络及异常转账</h3>
+      </div>
+      <div id="payment-review" hidden>
+        <section>
+          <h2>收款网络</h2>
           <div id="health"></div>
+        </section>
+        <section>
+          <h2>待核对转账</h2>
           <div id="reviews"></div>
         </section>
       </div>
@@ -105,7 +127,10 @@
           </div>
         </section>
         <section id="address">
-          <h2>地址生成 <span>10 U / 单</span></h2>
+          <div class="address-price">
+            <h2>地址证明生成</h2>
+            <strong>10 <small>U / 份</small></strong>
+          </div>
           <details id="address-details">
             <summary>填写订单</summary>
             <form id="address-form">
@@ -124,8 +149,9 @@
                   maxlength="6"
                   required
               /></label>
-              <p class="hint">提交时预留 10 U，交付完成后扣款。处理失败会释放预留金额。</p>
-              <button>提交订单 · 10 U</button>
+              <p class="hint">付款后开始生成。若订单处理失败，10 U 将退回账户余额。</p>
+              <a href="/__host/security">设置支付密码</a>
+              <button>支付 10 U 并生成</button>
             </form>
           </details>
         </section>

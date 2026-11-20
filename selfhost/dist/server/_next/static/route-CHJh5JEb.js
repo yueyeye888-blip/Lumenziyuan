@@ -1,1 +1,110 @@
-import{t as e}from"./chatgpt-auth-CAwUFDgI.js";import{_ as t,c as n,m as r,o as i,s as a,t as o,v as s}from"./db-BPPk2v0u.js";import{t as c}from"./resource-access-CnhjFS2I.js";var l=`force-dynamic`;async function u(){let t=await e();if(!t)return Response.json({error:`请先登录`},{status:401});let s=o(),l=c(t),[u,d,f]=await Promise.all([s.select().from(n).orderBy(r(n.createdAt)),s.select().from(i).orderBy(r(i.createdAt)),s.select().from(a).orderBy(r(a.createdAt))]);return Response.json({groups:u.map(e=>{let n=f.filter(t=>t.groupId===e.id),r=n.find(e=>e.userEmail===t.email.trim().toLowerCase());return{...e,canPurchase:l||!!r?.canPurchase,assignedToMe:l||!!r,memberEmails:l?n.map(e=>e.userEmail):void 0,products:d.filter(t=>t.groupId===e.id).map(e=>({id:e.productId,name:e.productName,packageCode:e.packageCode,country:e.country,supplier:e.supplier}))}}),canManage:l},{headers:{"cache-control":`private, no-store`}})}async function d(r){let s=await e();if(!s||!c(s))return Response.json({error:`仅管理员可以管理业务分组`},{status:403});let l=await r.json(),u=l.name?.trim().slice(0,40)||``,d=(l.products||[]).filter(e=>e.id&&e.name).slice(0,500),f=Array.from(new Set((l.memberEmails||[]).map(e=>e.trim().toLowerCase()).filter(e=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)))).slice(0,200);if(!u)return Response.json({error:`请填写分组名称`},{status:400});let p=l.id?.trim()||crypto.randomUUID(),m=new Date().toISOString(),h=o();if(await h.insert(n).values({id:p,name:u,accent:l.accent||`bg-[#5578b6]`,createdBy:s.userId,createdAt:m,updatedAt:m}).onConflictDoUpdate({target:n.id,set:{name:u,accent:l.accent||`bg-[#5578b6]`,updatedAt:m}}),await h.delete(i).where(t(i.groupId,p)),await h.delete(a).where(t(a.groupId,p)),d.length)for(let e=0;e<d.length;e+=25)await h.insert(i).values(d.slice(e,e+25).map(e=>({id:`${p}:${e.id}`,groupId:p,productId:e.id,productName:e.name,packageCode:e.packageCode||null,country:e.country||null,supplier:e.supplier||`eSIMAccess`})));if(f.length)for(let e=0;e<f.length;e+=25)await h.insert(a).values(f.slice(e,e+25).map(e=>({id:`${p}:${e}`,groupId:p,userEmail:e,canPurchase:!0,assignedBy:s.userId})));return Response.json({ok:!0,id:p,productCount:d.length,memberCount:f.length})}async function f(t){let r=await e();if(!r||!c(r))return Response.json({error:`仅管理员可以删除业务分组`},{status:403});let l=(await t.json()).ids?.filter(Boolean).slice(0,50)||[];if(!l.length)return Response.json({error:`请选择要删除的分组`},{status:400});let u=o();return await u.delete(a).where(s(a.groupId,l)),await u.delete(i).where(s(i.groupId,l)),await u.delete(n).where(s(n.id,l)),Response.json({ok:!0})}export{f as DELETE,u as GET,d as POST,l as dynamic};
+import { t as getChatGPTUser } from "./chatgpt-auth-CAwUFDgI.js";
+import { _ as eq, c as resourceGroups, m as asc, o as resourceGroupItems, s as resourceGroupMembers, t as getDb, v as inArray } from "./db-BPPk2v0u.js";
+import { t as isResourceAdmin } from "./resource-access-CnhjFS2I.js";
+export const dynamic = "force-dynamic";
+export async function GET() {
+    const user = await getChatGPTUser();
+    if (!user) return Response.json({
+        error: "请先登录"
+    }, {
+        status: 401
+    });
+    const db = getDb();
+    const admin = isResourceAdmin(user);
+    const [groups, items] = await Promise.all([
+        db.select().from(resourceGroups).orderBy(asc(resourceGroups.createdAt)),
+        db.select().from(resourceGroupItems).orderBy(asc(resourceGroupItems.createdAt))
+    ]);
+    return Response.json({
+        groups: groups.map((group)=>({
+                ...group,
+                canPurchase: true,
+                products: items.filter((item)=>item.groupId === group.id).map((item)=>({
+                        id: item.productId,
+                        name: item.productName,
+                        packageCode: item.packageCode,
+                        country: item.country,
+                        supplier: item.supplier
+                    }))
+            })),
+        canManage: admin
+    }, {
+        headers: {
+            "cache-control": "private, no-store"
+        }
+    });
+}
+export async function POST(request) {
+    const user = await getChatGPTUser();
+    if (!user || !isResourceAdmin(user)) return Response.json({
+        error: "仅管理员可以管理业务分组"
+    }, {
+        status: 403
+    });
+    const body = await request.json();
+    const name = body.name?.trim().slice(0, 40) || "";
+    const products = (body.products || []).filter((item)=>item.id && item.name).slice(0, 500);
+    if (!name) return Response.json({
+        error: "请填写分组名称"
+    }, {
+        status: 400
+    });
+    const id = body.id?.trim() || crypto.randomUUID();
+    const now = new Date().toISOString();
+    const db = getDb();
+    await db.insert(resourceGroups).values({
+        id,
+        name,
+        accent: body.accent || "bg-[#5578b6]",
+        createdBy: user.userId,
+        createdAt: now,
+        updatedAt: now
+    }).onConflictDoUpdate({
+        target: resourceGroups.id,
+        set: {
+            name,
+            accent: body.accent || "bg-[#5578b6]",
+            updatedAt: now
+        }
+    });
+    await db.delete(resourceGroupItems).where(eq(resourceGroupItems.groupId, id));
+    if (products.length) {
+        for(let index = 0; index < products.length; index += 25){
+            await db.insert(resourceGroupItems).values(products.slice(index, index + 25).map((item)=>({
+                    id: `${id}:${item.id}`,
+                    groupId: id,
+                    productId: item.id,
+                    productName: item.name,
+                    packageCode: item.packageCode || null,
+                    country: item.country || null,
+                    supplier: item.supplier || "eSIMAccess"
+                })));
+        }
+    }
+    return Response.json({
+        ok: true,
+        id,
+        productCount: products.length
+    });
+}
+export async function DELETE(request) {
+    const user = await getChatGPTUser();
+    if (!user || !isResourceAdmin(user)) return Response.json({
+        error: "仅管理员可以删除业务分组"
+    }, {
+        status: 403
+    });
+    const ids = (await request.json()).ids?.filter(Boolean).slice(0, 50) || [];
+    if (!ids.length) return Response.json({
+        error: "请选择要删除的分组"
+    }, {
+        status: 400
+    });
+    const db = getDb();
+    await db.delete(resourceGroupMembers).where(inArray(resourceGroupMembers.groupId, ids));
+    await db.delete(resourceGroupItems).where(inArray(resourceGroupItems.groupId, ids));
+    await db.delete(resourceGroups).where(inArray(resourceGroups.id, ids));
+    return Response.json({
+        ok: true
+    });
+}

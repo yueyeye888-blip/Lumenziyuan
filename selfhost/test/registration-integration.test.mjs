@@ -7,7 +7,7 @@ import path from 'node:path';
 import { openIdentityStore } from '../resource-operations/session-store.mjs';
 import { clientAddress, customerEsimRoute } from '../registration.mjs';
 import { encryptMailToken, createOutlookMail } from '../outlook-mail.mjs';
-import { verifyPassword } from '../auth.mjs';
+import { passwordRecord, verifyPassword } from '../auth.mjs';
 
 function fixture(t) {
   const root=mkdtempSync(path.join(tmpdir(),'lumen-register-'));
@@ -17,7 +17,10 @@ function fixture(t) {
   const config={ bindings:{ SETTINGS_ENCRYPTION_KEY:randomBytes(32).toString('base64'),RESOURCE_ADMIN_EMAILS:'owner@example.org,Alias@example.org' } };
   const sent=[];
   let time=Date.now();
-  const options={config,now:()=>time,outlook:{sendRegistrationCode:async (email,code)=>{ sent.push({email,code}); }}};
+  const options={config,now:()=>time,outlook:{
+    sendRegistrationCode:async (email,code)=>{ sent.push({email,code}); },
+    sendPasswordResetCode:async (email,code)=>{sent.push({email,code,reset:true});},
+  }};
   let identities=openIdentityStore(root,options);
   t.after(()=>{identities.close();rmSync(root,{recursive:true,force:true});});
   return {root,config,sent,options,get store(){return identities;},advance:ms=>{time+=ms;},restart(){identities.close();identities=openIdentityStore(root,options);}};
@@ -96,4 +99,70 @@ test('configured Outlook sends an OTP to only the requested recipient and delive
   assert.deepEqual(delivery.message.toRecipients,[{emailAddress:{address:'user@example.org'}}]);
   assert.equal(delivery.saveToSentItems,false);
   assert.match(delivery.message.body.content,/012345/);
+  await mail.sendPasswordResetCode('user@example.org','543210');
+  assert.match(delivery.message.subject,/重置/);
+  assert.match(delivery.message.body.content,/543210/);
+  assert.equal(delivery.saveToSentItems,false);
+});
+
+test('password recovery persists across restart and revokes every session while preserving roles',async t=>{
+  const f=fixture(t);
+  const legacy={id:'owner',name:'Site owner',email:'owner@example.org',enabled:true,password:passwordRecord(password)};
+  writeFileSync(path.join(f.root,'config','accounts.json'),JSON.stringify([legacy]));
+  const staff=f.store.create({email:'member@example.org',name:'Lena',password}).account;
+  const email='customer@example.org';
+  await f.store.registration.requestCode(email,'192.0.2.4');
+  const buyer=f.store.registration.register({email,code:f.sent.at(-1).code,password}).account;
+  f.advance(61000);
+  for(const account of [legacy,staff,buyer]){
+    const old=f.store.issue(f.store.byEmail(account.email)).split(/[=;]/)[1];
+    const other=f.store.issue(f.store.byEmail(account.email)).split(/[=;]/)[1];
+    assert.equal((await f.store.registration.requestResetCode(account.email,'192.0.2.4')).status,200);
+    const notice=f.sent.at(-1);
+    assert.equal(notice.email,account.email);
+    assert.ok(notice.reset);
+    f.restart();
+    const fields={email:account.email,code:notice.code,password:'a-new-login-password'};
+    assert.equal(f.store.registration.register(fields).status,400);
+    assert.equal(f.store.registration.resetPassword(fields).reset,true);
+    f.restart();
+    const updated=f.store.byEmail(account.email);
+    assert.equal(updated.id,account.id);
+    assert.equal(updated.role, account===staff?'employee':account.role);
+    assert.ok(verifyPassword(fields.password,updated.password));
+    assert.equal(verifyPassword(password,updated.password),false);
+    assert.equal(f.store.lookup(old),null);
+    assert.equal(f.store.lookup(other),null);
+    assert.equal(f.store.registration.resetPassword(fields).status,400);
+  }
+  // Reprovisioning the configured owner outside the application takes precedence over a stale override.
+  const replacement=passwordRecord('new-owner-config-password');
+  writeFileSync(path.join(f.root,'config','accounts.json'),JSON.stringify([{...legacy,password:replacement}]));
+  assert.deepEqual(f.store.byEmail(legacy.email).password,replacement);
+});
+test('password reset hides eligibility, expires codes and invalidates failed or exhausted challenges',async t=>{
+  const f=fixture(t),email='recover@example.org',ip='192.0.2.5';
+  f.store.create({email,name:'A',password});
+  const known=await f.store.registration.requestResetCode(email,ip);
+  const code=f.sent.at(-1).code;
+  for(const address of ['unknown@example.org','owner@example.org']){
+    assert.deepEqual(await f.store.registration.requestResetCode(address,ip),known);
+    assert.equal(f.store.registration.resetPassword({email:address,code,password}).status,400);
+  }
+  assert.equal(f.sent.length,1);
+  assert.equal((await f.store.registration.requestResetCode(email,ip)).status,429);
+  const wrong=code==='000000'?'999999':'000000';
+  for(let i=0;i<5;i++)assert.equal(f.store.registration.resetPassword({email,code:wrong,password}).status,400);
+  assert.equal(f.store.registration.resetPassword({email,code,password}).status,400);
+  f.advance(60_001);
+  await f.store.registration.requestResetCode(email,ip);
+  const stale=f.sent.at(-1).code;
+  f.advance(600_001);
+  assert.equal(f.store.registration.resetPassword({email,code:stale,password}).status,400);
+  let attempted;
+  f.options.outlook.sendPasswordResetCode=async(_email,code)=>{attempted=code;throw Error('Mail relay unavailable');};
+  assert.deepEqual(await f.store.registration.requestResetCode(email,ip),known);
+  await new Promise(r=>setImmediate(r));
+  assert.match(attempted,/^\d{6}$/);
+  assert.equal(f.store.registration.resetPassword({email,code:attempted,password}).status,400);
 });

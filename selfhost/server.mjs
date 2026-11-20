@@ -1,5 +1,6 @@
 import https from 'node:https';
 import { DatabaseSync } from 'node:sqlite';
+import { createArchiveDownloads } from './commerce/archive-downloads.mjs';
 import { createWallet, migrateQuotas } from './commerce/wallet.mjs';
 import { createDeposits } from './commerce/deposits.mjs';
 import { createCommerce, loadUsdtConfig } from './commerce/commerce.mjs';
@@ -28,6 +29,7 @@ const attempts = new Map();
 const identities = openIdentityStore(root, { config, outlook });
 const commerceDb = new DatabaseSync(path.join(root,'data','commerce.sqlite'));
 const wallet = createWallet(commerceDb);
+const archiveDownloads = createArchiveDownloads({ db:commerceDb, wallet });
 const deposits = createDeposits({db:commerceDb,config:loadUsdtConfig(root,config),credit:wallet.credit});
 const purchases = createEsimPurchases({ config, mf, identities, wallet, readBody: body });
 const catalog = createEsimCatalog(config.bindings || {});
@@ -40,14 +42,14 @@ let maintaining = false;
 async function reconcileCommerce() {
   if (maintaining) return;
   maintaining = true;
-  try { await Promise.all([migrateQuotas(commerceD1,wallet),commerce.sync(),purchases.settle()]); }
+  try { archiveDownloads.expire(); await Promise.all([migrateQuotas(commerceD1,wallet),commerce.sync(),purchases.settle()]); }
   catch { console.warn('Commerce reconciliation delayed'); }
   finally { maintaining = false; }
 }
 void reconcileCommerce();
 const commerceTimer=setInterval(reconcileCommerce,30_000);
-const operations = makeResourceOperations({ root, config, mf, identities, readBody: body, outlook, purchases });
-const returnPath = value => ['/__host/accounts','/__host/wallet','/__host/shop'].includes(value) ? value : safeReturn(value);
+const operations = makeResourceOperations({ root, config, mf, identities, readBody: body, outlook, purchases, wallet });
+const returnPath = value => ['/__host/accounts','/__host/wallet','/__host/shop','/__host/security','/__host/payment-review'].includes(value) ? value : safeReturn(value);
 const cookie = '__Host-lumen_session';
 const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
 const redirect = (res, location, headers = {}) => { res.writeHead(303, { location, 'cache-control': 'no-store', ...headers }); res.end(); };
@@ -65,7 +67,7 @@ const server = https.createServer(tls, async (req, res) => {
     const url = new URL(req.url, origin);
     const allowedOrigins = new Set([origin, ...(config.aliasOrigins || [])]);
     if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin && !allowedOrigins.has(req.headers.origin)) return json(res, 403, { error: '请求来源不匹配' });
-    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '1.0.0' });
+    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '1.1.0' });
     // Machine callbacks use the existing order secret, never a browser session.
     if (url.pathname === '/api/address-orders/callback') {
       if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
@@ -77,24 +79,31 @@ const server = https.createServer(tls, async (req, res) => {
       return;
     }
     if (url.pathname === '/signin-with-chatgpt') return redirect(res, '/__host/login?returnTo=' + encodeURIComponent(safeReturn(url.searchParams.get('return_to'))));
-    if (url.pathname === '/__host/register' && req.method === 'GET') return registrationPage(res);
-    if (['/__host/register/code','/__host/register/verify'].includes(url.pathname)) {
-      if (req.method !== 'POST') return json(res, 405, { error: '请求方式不支持。' });
+    const authForm = /^\/__host\/(register|forgot)(?:\/(code|verify))?$/.exec(url.pathname);
+    if (authForm) {
+      const reset = authForm[1] === 'forgot';
+      const step = authForm[2];
+      if (!step && req.method === 'GET') return registrationPage(res, { reset });
+      if (!step || req.method !== 'POST') return json(res, 405, { error: '请求方式不支持。' });
       if (!allowedOrigins.has(req.headers.origin) || !/^application\/x-www-form-urlencoded\b/i.test(req.headers['content-type'] || '')) {
-        return json(res, 403, { error: '请在本站注册页面提交。' });
+        return json(res, 403, { error: '请在本站账号页面提交。' });
       }
       const fields = new URLSearchParams((await body(req,4096)).toString());
       const email = fields.get('email') || '';
-      if (url.pathname === '/__host/register/code') {
-        const result = await identities.registration.requestCode(email, clientAddress(req));
-        return registrationPage(res, { ...result, email, verify: result.status === 200 || result.status === 429 });
+      const auth = identities.registration;
+      if (step === 'code') {
+        const send = reset ? auth.requestResetCode : auth.requestCode;
+        const result = await send(email, clientAddress(req));
+        return registrationPage(res, { ...result, email, reset, verify: result.status === 200 || result.status === 429 });
       }
-      const result = identities.registration.register({ email, code: fields.get('code'), password: fields.get('password') });
+      const verify = reset ? auth.resetPassword : auth.register;
+      const result = verify({ email, code: fields.get('code'), password: fields.get('password') });
+      if (result.reset) return redirect(res, '/__host/login?reset=complete', { 'set-cookie': identities.cookie('') });
       if (result.account) return redirect(res, '/__host/shop', { 'set-cookie': identities.issue(result.account) });
-      return registrationPage(res, { ...result, email, verify: true });
+      return registrationPage(res, { ...result, email, reset, verify: true });
     }
     if (url.pathname === '/__host/login') {
-      if (req.method === 'GET') return login(res, returnPath(url.searchParams.get('returnTo')));
+      if (req.method === 'GET') return login(res, returnPath(url.searchParams.get('returnTo')), '', url.searchParams.get('reset') === 'complete');
       if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
       const address = clientAddress(req);
       let attempt = attempts.get(address);
@@ -138,7 +147,7 @@ const server = https.createServer(tls, async (req, res) => {
     if (await catalog.route(req, res, url, session.user)) return;
     if (await purchases.route(req, res, url, session.user)) return;
     if (await operations.route(req, res, url, session.user)) return;
-    if (await handlePrivateTemplateArchive(req, res, { root, url, user: session.user, allowedOrigins, config })) return;
+    if (await handlePrivateTemplateArchive(req, res, { root, url, user: session.user, allowedOrigins, config, archiveDownloads, purchases, readBody:body })) return;
     if (req.method === 'GET' || req.method === 'HEAD') {
       const assetRoot = path.join(root, 'dist', 'client');
       const asset = path.resolve(assetRoot, '.' + decodeURIComponent(url.pathname));
@@ -169,6 +178,6 @@ const server = https.createServer(tls, async (req, res) => {
     console.error(JSON.stringify({ event: 'request_failed', path: req.url?.split('?')[0], time: new Date().toISOString() }));
   }
 });
-server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '1.0.0', port: config.port || 8443 })));
+server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '1.1.0', port: config.port || 8443 })));
 const cleanup = setInterval(() => { identities.cleanup(); for (const [key, value] of attempts) if (value.until < Date.now()) attempts.delete(key); }, 60_000);
 for (const event of ['SIGTERM', 'SIGINT']) process.on(event, () => { clearInterval(cleanup); clearInterval(commerceTimer); deposits.stop(); operations.close(); server.close(async () => { await mf.dispose(); process.exit(0); }); });

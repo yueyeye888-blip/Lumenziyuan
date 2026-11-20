@@ -12,35 +12,88 @@
     return node;
   };
   if (form) {
-    const list = document.getElementById('account-list');
-    const message = document.getElementById('account-status');
-    const refresh = async () => {
-      const {accounts} = await requestJson('/api/operations/accounts');
-      list.replaceChildren(...accounts.map(account => {
-        const row = document.createElement('li');
-        row.append(element('strong', account.name || account.email), element('span', account.email), element('small', `${account.admin ? '管理员' : account.role === 'customer' ? '客户' : '员工'} · ${account.enabled ? '启用' : '停用'}`));
-        if (account.enabled) {
-          const credit = element('a','添加余额');
-          credit.href = '/__host/wallet?credit=' + encodeURIComponent(account.email) + '#admin';
-          row.append(credit);
+    const select = (id) => document.getElementById(id);
+    const list = select('account-list');
+    const status = select('account-status');
+    const credit = select('credit-form');
+    const amount = (raw) => (raw / 10000).toLocaleString('en-US', {maximumFractionDigits:4}) + ' U';
+    let accounts = [], role = 'employee', target;
+    function show(dialog) {
+      dialog.querySelector('.modal-feedback').hidden = true;
+      dialog.showModal();
+      dialog.querySelector('input').focus();
+    }
+    function openCredit(account) {
+      target = account;
+      credit.reset();
+      select('credit-account').textContent = (account.name || account.email) + ' · ' + account.email;
+      select('credit-result').textContent = '当前可用余额 ' + amount(account.availableRaw);
+      show(select('credit-dialog'));
+    }
+    function render() {
+      const query = select('account-search').value.trim().toLowerCase();
+      const matches = accounts.filter(a => (role==='all' || a.role === role) &&
+        (a.email+' '+a.name).toLowerCase().includes(query));
+      list.replaceChildren();
+      for (const a of matches) {
+        const row = list.insertRow(), identity = row.insertCell();
+        identity.append(element('strong',a.name || a.email), element('small',a.email));
+        row.insertCell().textContent = ({admin:'管理员',employee:'员工',customer:'平台用户'})[a.role] + (a.enabled ? '' : '（停用）');
+        row.insertCell().textContent = amount(a.availableRaw);
+        const action = row.insertCell();
+        if (a.enabled) {
+          const b=element('button','增加额度');b.type='button';b.className='secondary';b.onclick=()=>openCredit(a);action.append(b);
         }
-        return row;
-      }));
-    };
-    form.addEventListener('submit', async event => {
-      event.preventDefault();
-      const button = form.querySelector('button');
-      button.disabled = true;
-      message.textContent = '正在创建…';
-      try {
-        await requestJson('/api/operations/accounts', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(new FormData(form)))});
-        form.reset();
-        message.textContent = '账号已创建。';
-        await refresh().catch(() => { message.textContent = '账号已创建。刷新页面可查看最新列表。'; });
-      } catch (error) { message.textContent = error.message; }
-      finally { button.disabled = false; }
+      }
+      const empty = select('empty-accounts'); empty.hidden = !!matches.length;
+      empty.textContent = query ? '没有匹配的账号。' : role==='employee'?'暂无员工，点击「创建员工」即可添加。':'暂无账号。';
+    }
+    async function refresh() {
+      accounts=(await requestJson('/api/operations/accounts')).accounts;
+      render();
+    }
+    function selectTab(next) {
+      role=next;
+      for (const button of document.querySelectorAll('[data-role]')) button.setAttribute('aria-pressed',String(button.dataset.role===next));
+      render();
+    }
+    for (const button of document.querySelectorAll('[data-role]')) button.onclick=()=>selectTab(button.dataset.role);
+    select('account-search').oninput=render;
+    select('new-employee').onclick=()=>show(select('employee-dialog'));
+    document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>select(b.dataset.close).close());
+    function onSubmit(formEl,action) {
+      formEl.addEventListener('submit',async(event)=>{
+        event.preventDefault();const b=formEl.querySelector('button'), dialog=formEl.closest('dialog');
+        const feedback=formEl.querySelector('.modal-feedback');
+        b.disabled=true;dialog.querySelector('[data-close]').disabled=true;
+        try {await action(Object.fromEntries(new FormData(formEl)));dialog.close(); formEl.reset(); await refresh();}
+        catch(e){if(dialog.open){feedback.hidden=false;feedback.textContent=e.message;feedback.classList.add('problem')}else status.textContent=e.message;}
+        finally {b.disabled=false;dialog.querySelector('[data-close]').disabled=false;}
+      });
+      formEl.closest('dialog').addEventListener('cancel',e=>{if(formEl.querySelector('button').disabled)e.preventDefault()});
+    }
+    const post=(url,data)=>requestJson(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+    onSubmit(form,async fields=>{
+      await post('/api/operations/accounts',fields);
+      select('account-search').value='';selectTab('employee');status.textContent='已创建员工账号 '+fields.email+'。';
     });
-    void refresh().catch(error => { list.replaceChildren(element('li',error.message)); });
+    credit.elements.amount.oninput=()=>{
+      const delta=Math.round(Number(credit.elements.amount.value)*10000);
+      select('credit-result').textContent=credit.elements.amount.validity.valid && delta>0
+        ? '增加前 '+amount(target.availableRaw)+' · 预计增加后 '+amount(target.availableRaw+delta)
+        :'当前可用余额 '+amount(target.availableRaw);
+    };
+    onSubmit(credit,async fields=>{
+      const key='lumen:admin-credit:'+JSON.stringify([target.email,fields.amount,fields.note]);
+      const requestId=sessionStorage.getItem(key)||crypto.randomUUID();sessionStorage.setItem(key,requestId);
+      const data=await post('/api/commerce/admin/credit',{...fields,email:target.email,requestId});
+      sessionStorage.removeItem(key);status.textContent=data.email+' 的可用余额已更新为 '+amount(data.availableRaw)+'。';
+    });
+    refresh().then(()=>{
+      const email=new URL(location.href).searchParams.get('credit');
+      const account=email && accounts.find(a=>a.enabled && a.email.toLowerCase()===email.toLowerCase());
+      if(account) openCredit(account);
+    }).catch(e=>{select('empty-accounts').textContent=e.message});
     return;
   }
 
@@ -144,10 +197,6 @@
           const actions = document.createElement('div'); actions.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:12px';
           actions.append(button,email,info); heading.parentElement.append(actions);
           processed.add(heading); break;
-        }
-        case '平台钱包、员工额度与购买记录': {
-          const link = element('a','新增员工账号'); link.href = '/__host/accounts'; link.style.cssText = `${buttonStyle};margin-top:12px`;
-          heading.parentElement.append(link); processed.add(heading); break;
         }
         case 'Telegram 资源提醒': {
           const message = element('p','正在读取定时检查状态…'); message.style.cssText = 'font-size:12px;color:#637b9d;margin-top:8px';

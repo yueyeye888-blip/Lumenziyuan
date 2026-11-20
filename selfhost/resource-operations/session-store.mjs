@@ -18,8 +18,16 @@ export function openIdentityStore(root, { config = {}, outlook, now } = {}) {
     id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE COLLATE NOCASE, name TEXT NOT NULL, password TEXT NOT NULL
   ); CREATE TABLE IF NOT EXISTS customers (
     id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE COLLATE NOCASE, name TEXT NOT NULL, password TEXT NOT NULL
+  ); CREATE TABLE IF NOT EXISTS configured_password_overrides (
+    user_id TEXT PRIMARY KEY, source_version TEXT NOT NULL, password TEXT NOT NULL
   )`);
-  const configured = () => JSON.parse(readFileSync(usersPath, 'utf8'));
+  const configuredSource = () => JSON.parse(readFileSync(usersPath, 'utf8'));
+  const sourceVersion = account => hash(JSON.stringify([account.email.toLowerCase(), account.password]));
+  const override = store.prepare('SELECT password FROM configured_password_overrides WHERE user_id=? AND source_version=?');
+  const configured = () => configuredSource().map(account => {
+    const record = override.get(account.id, sourceVersion(account));
+    return record ? { ...account, password: JSON.parse(record.password) } : account;
+  });
   const allStored = store.prepare(`SELECT id,email,name,password,'employee' AS role FROM employees
     UNION ALL SELECT id,email,name,password,'customer' AS role FROM customers ORDER BY name`);
   const storedEmail = store.prepare(`SELECT id,email,name,password,'employee' AS role FROM employees WHERE email=?
@@ -37,7 +45,21 @@ export function openIdentityStore(root, { config = {}, outlook, now } = {}) {
     store.prepare('INSERT INTO customers VALUES (?,?,?,?)').run(account.id,email,account.name,JSON.stringify(account.password));
     return account;
   }
-  const registration = registrationStore({ db: store, config, byEmail, insertCustomer, outlook, now });
+  function replacePassword(account, password) {
+    const record = JSON.stringify(passwordRecord(password));
+    const original = configuredSource().find(user => user.id === account.id);
+    if (original) {
+      // The service can read the deployment configuration; writable credentials live in its private database.
+      store.prepare(`INSERT INTO configured_password_overrides VALUES(?,?,?) ON CONFLICT(user_id)
+        DO UPDATE SET source_version=excluded.source_version,password=excluded.password`).run(account.id,sourceVersion(original),record);
+    } else {
+      const table = account.role === 'customer' ? 'customers' : 'employees';
+      const saved = store.prepare(`UPDATE ${table} SET password=? WHERE id=?`).run(record,account.id);
+      if (saved.changes !== 1) throw Error('Account changed during password reset');
+    }
+    store.prepare('DELETE FROM sessions WHERE user_id=?').run(account.id);
+  }
+  const registration = registrationStore({ db: store, config, byEmail, insertCustomer, replacePassword, outlook, now });
   const version = user => hash(JSON.stringify(user.password));
   const remove = token => { if (/^[a-f0-9]{64}$/.test(token || '')) store.prepare('DELETE FROM sessions WHERE token_hash=?').run(hash(token)); };
   const cookie = token => `__Host-lumen_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${token ? lifetime / 1000 : 0}`;

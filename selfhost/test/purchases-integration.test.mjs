@@ -85,7 +85,6 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     await db.batch([
       db.prepare("INSERT INTO resource_groups(id,name,created_by) VALUES('test','Purchase group','admin')"),
       db.prepare("INSERT INTO resource_group_items(id,group_id,product_id,product_name,package_code,supplier) VALUES('eligible','test','SG_Fixed','Singapore','SG123','eSIMAccess')"),
-      db.prepare("INSERT INTO resource_group_members(id,group_id,user_email,can_purchase,assigned_by) VALUES('member','test','staff@test.example',1,'admin')"),
     ]);
     await api.ready();
     server.listen(0,'127.0.0.1');
@@ -109,7 +108,7 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     const publicQuote = await request(quotePath,customer,{ids:['FR_1']});
     assert.equal(publicQuote.data.lines[0].priceRaw,26_000);
     assert.equal(publicQuote.data.availableRaw,0);
-    assert.equal((await request(quotePath,staff,{ids:['FR_1']})).status,403);
+    assert.equal((await request(quotePath,staff,{ids:['FR_1']})).data.lines[0].priceRaw,26_000);
     assert.equal((await request(orderPath,staff,cart(), 'https://other.example')).status,403);
     assert.equal((await request(orderPath,staff,cart(undefined,[{id:'SG_Fixed',priceRaw:price,count:31}]))).status,400);
     assert.equal((await request(orderPath,staff,cart(undefined,[{id:'SG_Fixed',priceRaw:price - 1,count:3}]))).status,409);

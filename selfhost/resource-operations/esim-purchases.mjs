@@ -100,26 +100,30 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
 
   async function packageLines(db, user, ids, catalog) {
     const byId = new Map(catalog.map(plan => [plan.slug || plan.packageCode, plan]));
-    let memberships;
+    let groupedItems = [];
     if (!isAdmin(user) && user.role !== 'customer') {
+      // Group membership tags the acquired card for staff reporting. Funds and the
+      // payment PIN authorize the transaction independently of the catalog grouping.
+      const slots = ids.map(() => '?').join(',');
+      const codes = ids.map(id => byId.get(id)?.packageCode || '');
       const { results } = await db.prepare(`SELECT i.product_id,i.package_code,i.group_id FROM resource_group_items i
-        JOIN resource_group_members m ON m.group_id=i.group_id JOIN resource_groups g ON g.id=i.group_id
-        WHERE i.supplier=? AND m.user_email=? AND m.can_purchase=1 ORDER BY i.group_id`).bind(supplierName,user.email.toLowerCase()).all();
-      memberships = results;
+        JOIN resource_groups g ON g.id=i.group_id
+        WHERE i.supplier=? AND (i.product_id IN (${slots}) OR i.package_code IN (${slots}))
+        ORDER BY i.group_id`).bind(supplierName,...ids,...codes).all();
+      groupedItems = results;
     }
     return ids.map(id => {
       const plan = byId.get(id);
       check(plan && validId.test(plan.packageCode || '') && Number.isSafeInteger(plan.price) &&
         plan.price >= 0 && plan.currencyCode === 'USD', 409, '所选套餐当前不可购买，请刷新资源市场。');
-      const group = memberships?.find(item => item.product_id === id || item.package_code === plan.packageCode);
-      check(isAdmin(user) || user.role === 'customer' || group, 403, '当前账号没有购买所选套餐的权限。');
+      const group = groupedItems.find(item => item.product_id === id) || groupedItems.find(item => item.package_code === plan.packageCode);
       return { id, code:plan.slug || plan.packageCode, packageCode:plan.packageCode, name:plan.name,
         priceRaw:retailPrice(plan.price), costRaw:plan.price, periodNum:Number(plan.dataType) === 2 && plan.duration === 1 ? 1 : undefined, groupId:group?.group_id || null };
     });
   }
 
   async function verifyPaymentPin(db, user, pin, security) {
-    check(security, 409, '请先到「安全与支付设置」设置 6 位支付密码。');
+    check(security, 409, '请先在账户设置中设定 6 位支付密码。');
     check(!(Date.parse(security.locked_until) > Date.now()), 429, '支付密码已锁定，请 15 分钟后再试。');
     const attempts = security.locked_until ? 0 : security.failed_attempts;
     const expected = Buffer.from(security.pin_hash, 'base64');
@@ -349,7 +353,7 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
       const renewal = renewalPaths.has(url.pathname);
       if (quota) {
         check(isAdmin(user),403,'仅管理员可管理账户余额。');
-        return respond(410,{error:'账户余额已统一管理，请打开账户余额页面。',href:'/__host/wallet'});
+        return respond(410,{error:'请从员工与额度页面管理账户余额。',href:'/__host/accounts'});
       }
       if (url.pathname==='/api/esim/purchase-cards') {
         check(req.method==='GET',405,'请求方式不支持。');

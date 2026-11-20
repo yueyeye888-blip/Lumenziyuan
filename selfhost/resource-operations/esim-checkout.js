@@ -188,7 +188,7 @@
     if (quote.pinConfigured) form.append(label,warning);
     else {
       form.append(node('p','请先设置支付密码，再回来确认购买。','lumen-buy-note'));
-      if (selection.security) actions.append(button('去设置支付密码',() => { modal.close(); selection.security(); }));
+      actions.append(button('去设置支付密码',() => window.location.assign('/__host/security')));
     }
     form.append(feedback,actions);
     feedback.textContent = '';
@@ -419,7 +419,10 @@
     form.append(summary);
     feedback.textContent='';
     if (!rows.length || !quote.pinConfigured) {
-      if (rows.length) feedback.textContent='请先在「安全与支付设置」设定 6 位支付密码。';
+      if (rows.length) {
+        feedback.textContent='请先设置 6 位支付密码。';
+        const setup=node('a','设置支付密码'); setup.href='/__host/security'; feedback.append(' ',setup);
+      }
       const total=rows.reduce((price,card)=>price+card.options[0].priceRaw,0);
       amount.textContent='应付 '+money(total);
       content.replaceChildren(form,feedback);
@@ -499,5 +502,5 @@
 
   window.addEventListener('lumen:checkout',event => void checkout(event.detail));
   window.addEventListener('lumen:esim-orders',() => void orderHistory());
-  window.addEventListener('lumen:esim-quota',() => { window.location.assign('/__host/wallet'); });
+  window.addEventListener('lumen:esim-quota',() => { window.location.assign('/__host/accounts'); });
 })();

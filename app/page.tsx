@@ -83,9 +83,6 @@ type ResourceGroup = {
   productIds: string[];
   products: GroupProduct[];
   accent: string;
-  memberEmails?: string[];
-  canPurchase?: boolean;
-  assignedToMe?: boolean;
 };
 
 type PurchaseHistoryItem = {
@@ -142,6 +139,7 @@ type PlatformOverview = {
     email: string;
     displayName: string;
     isAdmin: boolean;
+    canManageAccounts?: boolean;
   };
   balance?: { raw: number; amount: number; currency: string };
   history?: {
@@ -605,7 +603,6 @@ export default function Home() {
         name: group.name,
         accent: group.accent,
         products: group.products,
-        memberEmails: group.memberEmails || [],
       }),
     });
     if (!response.ok) throw new Error("分组保存失败");
@@ -1006,33 +1003,20 @@ function StoreView(props: StoreViewProps) {
   } = props;
   const filtersActive =
     minDataGb !== "0" || maxDuration !== "0" || maxPrice !== "0";
-  const canBuyProduct = (product: Product) =>
-    isAdmin ||
-    groups.some(
-      (group) => group.canPurchase && group.productIds.includes(product.id),
-    );
   return (
     <div className="mx-auto max-w-[1480px] px-5 py-6 md:px-8 md:py-8">
       <section className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
         <div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-[#6582bd]">
-            {favoriteOnly
-              ? "我的收藏"
-              : isAdmin
-                ? "资源商城"
-                : "我的专属资源区"}
+            {favoriteOnly ? "我的收藏" : "资源商城"}
           </p>
           <h1 className="text-2xl font-semibold tracking-tight md:text-[30px]">
-            {favoriteOnly
-              ? "常用套餐"
-              : isAdmin
-                ? "选择需要的资源"
-                : "选择已获授权的资源"}
+            {favoriteOnly ? "常用套餐" : "选择需要的资源"}
           </h1>
           <p className="mt-2 text-sm text-slate-500">
             {isAdmin
-              ? "价格、流量、有效期和运营商均来自供应商实时目录。"
-              : "管理员为你配置专属区域；已授权区域可购买，其他区域仅供查看。"}
+              ? "套餐售价为供应商报价的两倍，付款时按 1 U 抵 1 美元。"
+              : "按分组查找套餐，使用账户余额购买。"}
           </p>
         </div>
         <div className="flex gap-2">
@@ -1097,19 +1081,12 @@ function StoreView(props: StoreViewProps) {
                   <span className="text-[10px] text-slate-400">
                     {group.productIds.length}
                   </span>
-                  {!isAdmin && (
-                    <span
-                      className={`${group.canPurchase ? "bg-[#dff5eb] text-[#187158]" : "bg-slate-200 text-slate-500"} rounded-full px-1.5 py-0.5 text-[9px]`}
-                    >
-                      {group.canPurchase ? "可购买" : "仅查看"}
-                    </span>
-                  )}
                 </button>
                 {isAdmin && (
                   <button
                     onClick={() => onEditGroup(group)}
                     className="mr-1 grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-white hover:text-[#315c9f]"
-                    title="编辑分组商品和成员权限"
+                    title="编辑分组商品"
                   >
                     <Pencil size={13} />
                   </button>
@@ -1200,7 +1177,6 @@ function StoreView(props: StoreViewProps) {
               product={product}
               favorite={favorites.includes(product.id)}
               selected={selected.includes(product.id)}
-              canPurchase={canBuyProduct(product)}
               toggleFavorite={() => toggleFavorite(product.id)}
               toggleSelected={() => toggleSelected(product.id)}
               buy={() => openPurchase(product.id)}
@@ -1237,7 +1213,6 @@ function SimpleProductCard({
   product,
   favorite,
   selected,
-  canPurchase,
   toggleFavorite,
   toggleSelected,
   buy,
@@ -1245,7 +1220,6 @@ function SimpleProductCard({
   product: Product;
   favorite: boolean;
   selected: boolean;
-  canPurchase: boolean;
   toggleFavorite: () => void;
   toggleSelected: () => void;
   buy: () => void;
@@ -1279,11 +1253,6 @@ function SimpleProductCard({
         </button>
       </div>
       <div className="mt-4 flex flex-wrap gap-1.5 text-[10px] text-slate-500">
-        <span
-          className={`${canPurchase ? "bg-[#e5f6ef] text-[#187158]" : "bg-slate-100 text-slate-500"} rounded-md px-2 py-1 font-medium`}
-        >
-          {canPurchase ? "已授权购买" : "仅查看"}
-        </span>
         <span className="rounded-md bg-[#f3f6fa] px-2 py-1">
           {product.data}
         </span>
@@ -1304,10 +1273,9 @@ function SimpleProductCard({
       </p>
       <div className="mt-auto flex items-center justify-between border-t border-slate-100 pt-3">
         <label
-          className={`${canPurchase ? "cursor-pointer" : "cursor-not-allowed"} flex items-center gap-2 text-[10px] text-slate-400`}
+          className="flex cursor-pointer items-center gap-2 text-[10px] text-slate-400"
         >
           <input
-            disabled={!canPurchase}
             type="checkbox"
             checked={selected}
             onChange={toggleSelected}
@@ -1320,11 +1288,10 @@ function SimpleProductCard({
             {formatMoney(product.price, product.currency)}
           </span>
           <button
-            disabled={!canPurchase}
             onClick={buy}
             className="rounded-lg bg-[#1d3b72] px-3 py-2 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
           >
-            {canPurchase ? "购买" : "未授权"}
+            购买
           </button>
         </div>
       </div>
@@ -2592,6 +2559,7 @@ function AdminView({ overview }: { overview: PlatformOverview }) {
         </div>
       </section>
 
+      {overview.viewer?.canManageAccounts && (
       <section className="mb-7 rounded-[20px] border border-[#e5e9f0] bg-white p-5 shadow-[0_4px_24px_rgba(28,48,82,.04)] md:p-7">
         <div className="mb-5 flex items-center justify-between">
           <div>
@@ -2600,14 +2568,15 @@ function AdminView({ overview }: { overview: PlatformOverview }) {
               按账号邮箱添加 U 余额，充值及订单支出都记入该账号的账本。
             </p>
           </div>
-          <button onClick={() => window.location.assign("/__host/wallet#admin")} className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-medium text-slate-600">
-            给账号加款
+          <button onClick={() => window.location.assign("/__host/accounts")} className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-medium text-slate-600">
+            员工与额度
           </button>
         </div>
         <div className="rounded-xl border border-dashed border-slate-200 py-10 text-center text-sm text-slate-500">
           管理员加款时填写账号邮箱、金额和备注。
         </div>
       </section>
+      )}
 
       <section className="grid gap-6 xl:grid-cols-[1.45fr_.65fr]">
         <PurchaseTable
@@ -4580,9 +4549,6 @@ function GroupModal({
   const [selectedProducts, setSelectedProducts] = useState<GroupProduct[]>(
     group?.products || [],
   );
-  const [memberText, setMemberText] = useState(
-    (group?.memberEmails || []).join("\n"),
-  );
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<GroupProduct[]>([]);
   const [loading, setLoading] = useState(false);
@@ -4637,14 +4603,6 @@ function GroupModal({
         productIds: selectedProducts.map((item) => item.id),
         products: selectedProducts,
         accent: group?.accent || "bg-[#5578b6]",
-        memberEmails: Array.from(
-          new Set(
-            memberText
-              .split(/[\n,，;；]+/)
-              .map((email) => email.trim().toLowerCase())
-              .filter(Boolean),
-          ),
-        ),
       });
     } catch {
       setError("分组保存失败，请稍后重试");
@@ -4660,13 +4618,13 @@ function GroupModal({
         <div className="sticky top-0 z-10 flex items-start justify-between border-b border-slate-100 bg-white/95 p-6 backdrop-blur">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[.14em] text-[#6885bd]">
-              管理员 · 手动选品与权限
+              管理员 · 业务分组
             </p>
             <h2 className="mt-2 text-xl font-semibold">
               {group ? "编辑专属区域" : "新建专属区域"}
             </h2>
             <p className="mt-2 text-xs text-slate-500">
-              只有你勾选的产品才会显示在区域中；只有被授权员工可以购买。
+              选择要放入此分组的商品。
             </p>
           </div>
           <button
@@ -4687,32 +4645,6 @@ function GroupModal({
               placeholder="例如：印尼 Levi 专属"
               className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm outline-none focus:border-[#87a3d9]"
             />
-          </label>
-          <label className="block rounded-2xl border border-[#dce5f3] bg-[#f7f9fc] p-4">
-            <span className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium text-slate-700">
-                允许购买的员工邮箱
-              </span>
-              <span className="text-xs text-slate-400">
-                {
-                  memberText
-                    .split(/[\n,，;；]+/)
-                    .map((email) => email.trim())
-                    .filter(Boolean).length
-                }{" "}
-                人
-              </span>
-            </span>
-            <textarea
-              value={memberText}
-              onChange={(event) => setMemberText(event.target.value)}
-              rows={4}
-              placeholder={"levi@company.com\nvin@company.com"}
-              className="mt-3 w-full resize-y rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 outline-none focus:border-[#87a3d9]"
-            />
-            <span className="mt-2 block text-xs leading-5 text-slate-500">
-              请填写员工登录本平台所用的邮箱，每行一个或用逗号分隔。名单内员工可购买，其他员工只能查看。
-            </span>
           </label>
           <div>
             <div className="mb-2 flex items-center justify-between">

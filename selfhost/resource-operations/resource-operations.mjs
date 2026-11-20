@@ -1,3 +1,4 @@
+import { canManageAccounts } from './account-access.mjs';
 import { readFileSync } from 'node:fs';
 import { webcrypto } from 'node:crypto';
 import { trustedHeaders } from './auth.mjs';
@@ -27,7 +28,7 @@ const statusForMail = {
   waiting: { code:'pending', tone:'warning', label:'等待交付', detail:'订单尚无交付完成回执。' },
 };
 
-export function makeResourceOperations({ root, config, mf, identities, readBody, outlook, purchases }) {
+export function makeResourceOperations({ root, config, mf, identities, readBody, outlook, purchases, wallet }) {
   const bindings = config.bindings || {};
   const admins = new Set(String(bindings.RESOURCE_ADMIN_EMAILS || '').split(',').map(email => email.trim().toLowerCase()).filter(Boolean));
   const admin = user => user.role !== 'customer' && admins.has(user.email.toLowerCase());
@@ -41,6 +42,7 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
   async function overview(user) {
     const reply = await dispatch('/api/esim/overview', user);
     const data = await reply.json();
+    if (data.viewer) data.viewer.canManageAccounts = canManageAccounts(config,user);
     if (data.history?.items) data.history.items = data.history.items.map(decorate);
     return { status: reply.status, data };
   }
@@ -83,8 +85,8 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       const {status,data} = await mailRecords(user); json(res,status,data); return true;
     }
     if (url.pathname === '/__host/accounts' && req.method === 'GET') {
-      if (!admin(user)) { json(res,403,{error:'仅管理员可管理账号'}); return true; }
-      res.writeHead(200, {'content-type':'text/html; charset=utf-8','cache-control':'private, no-store','content-security-policy':"default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'none'"});
+      if (!canManageAccounts(config,user)) { json(res,403,{error:'仅超级管理员可管理员工与额度。'}); return true; }
+      res.writeHead(200, {'content-type':'text/html; charset=utf-8','cache-control':'private, no-store','content-security-policy':"default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; frame-ancestors 'none'; form-action 'self'"});
       res.end(readFileSync(`${root}/resource-operations/accounts.html`)); return true;
     }
     if (url.pathname === '/__host/resource-operations.js' && req.method === 'GET') {
@@ -92,9 +94,9 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       res.end(readFileSync(`${root}/resource-operations/portal.js`)); return true;
     }
     if (url.pathname === '/api/operations/accounts') {
-      if (!admin(user)) { json(res,403,{error:'仅管理员可管理账号'}); return true; }
+      if (!canManageAccounts(config,user)) { json(res,403,{error:'仅超级管理员可管理员工与额度。'}); return true; }
       if (req.method === 'GET') {
-        json(res,200,{accounts:identities.list().map(account => ({email:account.email,name:account.name,enabled:account.enabled !== false,admin:admin(account),role:admin(account) ? 'admin' : account.role === 'customer' ? 'customer' : 'employee'}))}); return true;
+        json(res,200,{accounts:identities.list().map(account => ({email:account.email,name:account.name,availableRaw:wallet.balance(account.id),enabled:account.enabled !== false,admin:admin(account),role:admin(account) ? 'admin' : account.role === 'customer' ? 'customer' : 'employee'}))}); return true;
       }
       if (req.method === 'POST' && req.headers.origin === config.origin && /^application\/json\b/.test(req.headers['content-type'] || '')) {
         let fields;

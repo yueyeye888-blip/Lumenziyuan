@@ -43,7 +43,7 @@ test('wallet atomically limits combined pending purchases and works on Node with
   raw.close();
 });
 
-test('packaged Worker validates the billed order reference; actual D1 failure releases one 10 U hold', async () => {
+test('packaged Worker validates the billed order reference; a failed prepaid order refunds 10 U once', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'lumen-billing-'));
   await symlink(path.join(source, 'dist'), path.join(root, 'dist'), 'dir');
   await mkdir(path.join(root, 'data'));
@@ -92,6 +92,8 @@ test('packaged Worker validates the billed order reference; actual D1 failure re
     );
     assert.equal(wallet.balance(user.id), 100000);
     assert.equal(wallet.snapshot(user.id).heldRaw, 0);
+    assert.equal(result.data.paymentStatus,'refunded');
+    assert.equal(wallet.snapshot(user.id).entries.filter(e=>e.reference.startsWith('refund:')).length,1);
     assert.equal((await bill.submit(user, key, payload)).data.requestNo, result.data.requestNo);
     assert.equal((await d1.prepare('SELECT COUNT(*) n FROM address_orders').first()).n, 1);
     assert.equal(existsSync(path.join(config.siteOrderQueueDirectory, result.data.requestNo, 'pending.json')), false);
@@ -131,7 +133,7 @@ test('packaged Worker validates the billed order reference; actual D1 failure re
   }
 });
 
-test('restart recovers one acknowledged queue file, reserves once until delivery and does not resend an ambiguous order', async () => {
+test('restart recovers one acknowledged queue file, charges once before generation and does not resend an ambiguous order', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'lumen-staging-'));
   const db = new DatabaseSync(':memory:'),
     wallet = createWallet(db),
@@ -162,6 +164,8 @@ test('restart recovers one acknowledged queue file, reserves once until delivery
     getD1Database: async () => d1,
     dispatchFetch: async (_url, init) => {
       dispatches++;
+      assert.equal(wallet.snapshot(user.id).heldRaw,0);
+      assert.equal(wallet.snapshot(user.id).entries.filter(entry=>entry.delta===-addressPriceRaw).length,dispatches);
       const requestNo = init.headers.get('x-lumen-billed-address-order');
       orders.set(requestNo, { status: 'queued', user: user.id });
       if (throwAfterDispatch) throw Error('response lost');
@@ -176,7 +180,9 @@ test('restart recovers one acknowledged queue file, reserves once until delivery
     wallet.credit({ userId: user.id, amountRaw: addressPriceRaw * 2, reference: 'admin:test' });
     const firstKey = randomUUID(),
       result = await a.submit(user, firstKey, payload);
-    assert.equal(wallet.snapshot(user.id).heldRaw, addressPriceRaw);
+    assert.equal(wallet.snapshot(user.id).heldRaw, 0);
+    assert.equal(result.data.paymentStatus,'paid');
+    assert.equal(wallet.snapshot(user.id).entries.filter(e=>e.delta<0).length,1);
     const job = path.join(root, result.data.requestNo);
     await access(path.join(job, 'pending.json'));
     // Simulate crashing after receipt persistence and before the first publication.
@@ -207,7 +213,19 @@ test('restart recovers one acknowledged queue file, reserves once until delivery
     assert.equal(existsSync(path.join(root, ref, 'pending.json')), false);
     assert.equal((await restarted.submit(user, key, payload)).data.requestNo, ref);
     assert.equal(dispatches, 2);
-    assert.equal(wallet.snapshot(user.id).heldRaw, addressPriceRaw);
+    assert.equal(wallet.snapshot(user.id).heldRaw, 0);
+    // A previously submitted order still uses the settlement terms in effect when it was paid for.
+    for (const status of ['failed','delivered']) {
+      const owner='legacy-'+status, id='address:'+randomUUID(), reference='old-'+randomUUID();
+      wallet.credit({userId:owner,reference:'seed:'+owner,amountRaw:addressPriceRaw});
+      wallet.reserve(owner,id,addressPriceRaw);
+      db.prepare("INSERT INTO address_bills VALUES(?,?,?,?,?,'held')").run(id,reference,owner,'old-hash',now);
+      orders.set(reference,{status,user:owner});
+      await make().sync();
+      assert.equal(wallet.snapshot(owner).heldRaw,0);
+      assert.equal(wallet.balance(owner),status==='failed'?addressPriceRaw:0);
+      assert.equal(wallet.snapshot(owner).entries.length,status==='failed'?1:2);
+    }
   } finally {
     db.close();
     await rm(root, { recursive: true, force: true });

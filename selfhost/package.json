@@ -2,7 +2,7 @@
   "name": "lumen-resource-hub-selfhost",
   "private": true,
   "type": "module",
-  "version": "29.1.0",
+  "version": "29.2.0",
   "engines": {
     "node": ">=22.13.0"
   },

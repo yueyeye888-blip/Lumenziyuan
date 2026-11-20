@@ -1,3 +1,4 @@
+import { canManageAccounts } from '../resource-operations/account-access.mjs';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { qrcode } from './vendor/qrcode.mjs';
@@ -45,9 +46,12 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
   async function route(req, res, url, user) {
     const path = url.pathname;
     if (await warehouse.route(req, res, url, user)) return true;
+    if (path === '/__host/payment-review' && !admin(user)) return json(res, 403, { error: '仅管理员可核对转账。' });
     const asset = {
       '/__host/shop': 'store.html',
       '/__host/wallet': 'store.html',
+      '/__host/security': 'store.html',
+      '/__host/payment-review': 'store.html',
       '/__host/commerce.css': 'style.css',
       '/__host/commerce.js': 'store.js',
       '/__host/commerce-bridge.js': 'bridge.js',
@@ -88,12 +92,14 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
           ...wallet.snapshot(user.id),
           email: user.email,
           role: admin(user) ? 'admin' : user.role === 'customer' ? 'customer' : 'employee',
+          canManageAccounts: canManageAccounts(config,user),
           networks: deposits.networks(),
           priceAddressRaw: addressPriceRaw,
         });
       if (path === '/api/commerce/deposits' && req.method === 'GET')
         return json(res, 200, { orders: deposits.list(user.id) });
       if (path === '/api/commerce/deposits' && req.method === 'POST') {
+        if (!admin(user) && user.role !== 'customer') throw fault(403, '员工账户额度由管理员添加。');
         const { network, amount, requestId } = await fields();
         if (!uuid.test(requestId || '')) throw fault(400, '请重新打开充值表单。');
         return json(res, 201, { order: await deposits.create({ userId: user.id, network, amount, requestId }) });
@@ -117,7 +123,8 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
       }
       if (path.startsWith('/api/commerce/admin/')) {
         if (!admin(user)) throw fault(403, '仅管理员可管理余额。');
-        if (path.endsWith('/credit') && req.method === 'POST') {
+        if (path === '/api/commerce/admin/credit' && req.method === 'POST') {
+          if (!canManageAccounts(config,user)) throw fault(403,'仅超级管理员可增加账户额度。');
           const { email, amount, note, requestId } = await fields();
           if (!uuid.test(requestId || '') || typeof note !== 'string' || !note.trim() || note.length > 180)
             throw fault(400, '请填写入账备注。');
@@ -148,6 +155,8 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
               : null;
           if (f.action === 'credit' && (!account || account.enabled === false))
             throw fault(404, '请填写已注册的入账邮箱。');
+          if (f.action==='credit' && account.role!=='customer' && !canManageAccounts(config,user))
+            throw fault(403,'员工额度请由超级管理员核对。');
           const resolution = deposits.resolve({
             network: f.network,
             txHash: f.txHash,

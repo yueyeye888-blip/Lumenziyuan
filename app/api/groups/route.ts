@@ -15,44 +15,28 @@ export async function GET() {
   if (!user) return Response.json({ error: "请先登录" }, { status: 401 });
   const db = getDb();
   const admin = isResourceAdmin(user);
-  const [groups, items, members] = await Promise.all([
+  const [groups, items] = await Promise.all([
     db.select().from(resourceGroups).orderBy(asc(resourceGroups.createdAt)),
     db
       .select()
       .from(resourceGroupItems)
       .orderBy(asc(resourceGroupItems.createdAt)),
-    db
-      .select()
-      .from(resourceGroupMembers)
-      .orderBy(asc(resourceGroupMembers.createdAt)),
   ]);
   return Response.json(
     {
-      groups: groups.map((group) => {
-        const groupMembers = members.filter(
-          (member) => member.groupId === group.id,
-        );
-        const membership = groupMembers.find(
-          (member) => member.userEmail === user.email.trim().toLowerCase(),
-        );
-        return {
-          ...group,
-          canPurchase: admin || Boolean(membership?.canPurchase),
-          assignedToMe: admin || Boolean(membership),
-          memberEmails: admin
-            ? groupMembers.map((member) => member.userEmail)
-            : undefined,
-          products: items
-            .filter((item) => item.groupId === group.id)
-            .map((item) => ({
-              id: item.productId,
-              name: item.productName,
-              packageCode: item.packageCode,
-              country: item.country,
-              supplier: item.supplier,
-            })),
-        };
-      }),
+      groups: groups.map((group) => ({
+        ...group,
+        canPurchase: true,
+        products: items
+          .filter((item) => item.groupId === group.id)
+          .map((item) => ({
+            id: item.productId,
+            name: item.productName,
+            packageCode: item.packageCode,
+            country: item.country,
+            supplier: item.supplier,
+          })),
+      })),
       canManage: admin,
     },
     { headers: { "cache-control": "private, no-store" } },
@@ -70,7 +54,6 @@ export async function POST(request: Request) {
     id?: string;
     name?: string;
     accent?: string;
-    memberEmails?: string[];
     products?: Array<{
       id?: string;
       name?: string;
@@ -83,13 +66,6 @@ export async function POST(request: Request) {
   const products = (body.products || [])
     .filter((item) => item.id && item.name)
     .slice(0, 500);
-  const memberEmails = Array.from(
-    new Set(
-      (body.memberEmails || [])
-        .map((email) => email.trim().toLowerCase())
-        .filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)),
-    ),
-  ).slice(0, 200);
   if (!name) return Response.json({ error: "请填写分组名称" }, { status: 400 });
   const id = body.id?.trim() || crypto.randomUUID();
   const now = new Date().toISOString();
@@ -109,9 +85,6 @@ export async function POST(request: Request) {
       set: { name, accent: body.accent || "bg-[#5578b6]", updatedAt: now },
     });
   await db.delete(resourceGroupItems).where(eq(resourceGroupItems.groupId, id));
-  await db
-    .delete(resourceGroupMembers)
-    .where(eq(resourceGroupMembers.groupId, id));
   if (products.length) {
     for (let index = 0; index < products.length; index += 25) {
       await db.insert(resourceGroupItems).values(
@@ -127,24 +100,10 @@ export async function POST(request: Request) {
       );
     }
   }
-  if (memberEmails.length) {
-    for (let index = 0; index < memberEmails.length; index += 25) {
-      await db.insert(resourceGroupMembers).values(
-        memberEmails.slice(index, index + 25).map((email) => ({
-          id: `${id}:${email}`,
-          groupId: id,
-          userEmail: email,
-          canPurchase: true,
-          assignedBy: user.userId,
-        })),
-      );
-    }
-  }
   return Response.json({
     ok: true,
     id,
     productCount: products.length,
-    memberCount: memberEmails.length,
   });
 }
 

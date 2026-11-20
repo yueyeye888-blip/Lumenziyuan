@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { readFile, writeFile, rename, unlink, stat, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, rename, unlink, stat, mkdir, open } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -56,9 +56,10 @@ export function enhanceArchiveHtml(html, user) {
   return html.replace('</body>', `<script defer data-lumen-archive-loader src="${BASE}/enhance.js"></script></body>`);
 }
 
-export async function handlePrivateTemplateArchive(req, res, { root, url, user, allowedOrigins, config = {} }) {
+export async function handlePrivateTemplateArchive(req, res, { root, url, user, allowedOrigins, config = {}, archiveDownloads, purchases, readBody }) {
   if (url.pathname !== BASE && !url.pathname.startsWith(BASE + '/')) return false;
   if (!user?.email) { json(res, 401, { error: '请先登录公司账号' }); return true; }
+  if (user.role==='customer') { json(res,403,{error:'该模版库仅供员工访问。'}); return true; }
   const suffix = url.pathname.slice(BASE.length);
   if (['GET','HEAD'].includes(req.method) && ['', '/', '/app.js', '/style.css', '/enhance.js'].includes(suffix)) {
     const asset = suffix === '/app.js' ? 'app.js' : suffix === '/enhance.js' ? 'enhance.js' : suffix === '/style.css' ? 'style.css' : 'index.html';
@@ -85,13 +86,14 @@ export async function handlePrivateTemplateArchive(req, res, { root, url, user, 
     if (req.method === 'HEAD') res.end(); else await pipeline(createReadStream(file), res);
     return true;
   }
-  const match = suffix.match(/^\/files\/(windx-\d+)$/);
+  const match = suffix.match(/^\/files\/(windx-\d+)(\/authorize)?$/);
   if (!match) { json(res, 404, { error: '文件不存在' }); return true; }
   const id = match[1];
   const data = await catalog(root);
   const item = data.items.find(row => row.id === id);
   if (!item) { json(res, 404, { error: '文件不存在' }); return true; }
-  if (req.method === 'PUT') {
+  const authorize = Boolean(match[2]);
+  if (req.method === 'PUT' && !authorize) {
     if (!isOwner(user,config)) { json(res, 403, { error: '只有管理员可以上传或替换文件' }); return true; }
     if (!allowedOrigins?.has(req.headers.origin) || req.headers['x-lumen-archive-upload'] !== '1') { json(res, 403, { error: '上传来源不匹配' }); return true; }
     if (locks.has(id)) { json(res, 409, { error: '该文件正在归档中' }); return true; }
@@ -122,11 +124,29 @@ export async function handlePrivateTemplateArchive(req, res, { root, url, user, 
     } finally { locks.delete(id); }
     return true;
   }
-  if (!['GET','HEAD'].includes(req.method)) { json(res, 405, { error: '不支持此操作' }); return true; }
+  if (authorize ? req.method!=='POST' : !['GET','HEAD'].includes(req.method)) { json(res, 405, { error: '不支持此操作' }); return true; }
   if (item.fileStatus !== 'archived' || !new RegExp('^' + id + '\\.(zip|pdf|psd)$').test(item.file || '')) { json(res, 404, { error: '原文件尚未导入' }); return true; }
   const filename = path.join(directory(root), 'files', item.file);
   let details; try { details = await stat(filename); } catch { json(res, 404, { error: '原文件暂时不可用，请联系管理员' }); return true; }
   if (!details.isFile() || details.size !== item.bytes) { json(res, 409, { error: '文件校验信息不匹配，请联系管理员' }); return true; }
+  if (!archiveDownloads) { json(res,503,{error:'下载结算服务暂不可用。'}); return true; }
+  const receipt = url.searchParams.get('receipt');
+  try {
+    if (authorize) {
+      if (!allowedOrigins.has(req.headers.origin) || !/^application\/json\b/i.test(req.headers['content-type'] || '')) {
+        json(res,403,{error:'请在本站确认下载。'}); return true;
+      }
+      let fields;
+      try { fields=JSON.parse(await readBody(req,2048)); } catch { json(res,400,{error:'下载请求无效。'}); return true; }
+      await purchases.verifyPin(user,fields?.pin);
+      const token = archiveDownloads.authorize(user.id,item,fields?.requestId);
+      json(res,200,{downloadPath:BASE+'/files/'+id+'?receipt='+token}); return true;
+    }
+    archiveDownloads.check(user.id,item,receipt);
+  } catch(error) {
+    if (!error.status) throw error;
+    json(res,error.status,{error:error.message}); return true;
+  }
   let start = 0; let end = details.size - 1; let status = 200;
   if (req.headers.range) {
     const range = String(req.headers.range).match(/^bytes=(\d*)-(\d*)$/);
@@ -136,7 +156,41 @@ export async function handlePrivateTemplateArchive(req, res, { root, url, user, 
   }
   const headers = { 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename="${item.file}"; filename*=UTF-8''${encodeURIComponent(item.originalName || item.file)}`, 'content-length': end - start + 1, 'cache-control': 'private, no-store', 'accept-ranges': 'bytes', 'x-content-type-options': 'nosniff', 'x-lumen-sha256': item.sha256, 'content-security-policy': "default-src 'none'; sandbox" };
   if (status === 206) headers['content-range'] = `bytes ${start}-${end}/${details.size}`;
-  res.writeHead(status, headers);
-  if (req.method === 'HEAD') res.end(); else await pipeline(createReadStream(filename, { start, end }), res);
+  if (req.method==='HEAD') { res.writeHead(status,headers); res.end(); return true; }
+  let file;
+  try { file=await open(filename,'r'); } catch { json(res,404,{error:'原文件暂不可用。'});return true; }
+  let began=false, stream, completed=false, firstBytes=0;
+  try {
+    const opened = await file.stat();
+    if (!opened.isFile() || opened.size!==item.bytes) { json(res,409,{error:'文件大小已变更，请刷新目录。'});return true; }
+    // Read the first bytes before debiting, so an unreadable file never starts a paid transfer.
+    const first = Buffer.allocUnsafe(Math.min(end-start+1,64*1024));
+    const {bytesRead} = await file.read(first,0,first.length,start);
+    if (!bytesRead) { json(res,409,{error:'文件内容已变更，请刷新后重试。'});return true; }
+    if (res.destroyed || res.writableEnded || req.aborted) return true;
+    archiveDownloads.begin(user.id,item,receipt,start);
+    began=true;
+    res.writeHead(status,headers);
+    async function* contents() {
+      firstBytes=bytesRead;
+      yield first.subarray(0,bytesRead);
+      if (start+bytesRead<=end) {
+        stream=file.createReadStream({ start:start+bytesRead,end,autoClose:false });
+        yield* stream;
+      }
+    }
+    await pipeline(contents(),res);
+    completed=true;
+  } catch(error) {
+    if (!res.headersSent && error.status) json(res,error.status,{error:error.message});
+    else if (!res.headersSent) throw error;
+  } finally {
+    try {
+      if (began) archiveDownloads.end(receipt,completed ? end+1 : Math.min(details.size-1,start+firstBytes+(stream?.bytesRead||0)));
+    } finally {
+      if (stream) stream.destroy();
+      await file.close();
+    }
+  }
   return true;
 }

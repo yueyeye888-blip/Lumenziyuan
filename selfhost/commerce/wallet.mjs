@@ -68,7 +68,7 @@ export function createWallet(db) {
       db.prepare("INSERT INTO wallet_holds VALUES(?,?,?,'held',?)").run(key,user,amount,Date.now());
     });
   }
-  function finish(user,key,capture) {
+  function finish(user,key,capture,note = '订单消费') {
     return atomic(()=>{
       const h=hold.get(key);
       if (!h && !capture) return;
@@ -76,11 +76,11 @@ export function createWallet(db) {
       const next=capture?'spent':'released';
       if (h.state===next) return;
       if (h.state!=='held') throw fault(409,'这笔余额已完成结算。');
-      if (capture) db.prepare('INSERT INTO wallet_entries VALUES(?,?,?,?,NULL,?)').run('spend:'+key,user,-h.amount,'订单消费',Date.now());
+      if (capture) db.prepare('INSERT INTO wallet_entries VALUES(?,?,?,?,NULL,?)').run('spend:'+key,user,-h.amount,note,Date.now());
       db.prepare('UPDATE wallet_holds SET state=? WHERE reference=?').run(next,key);
     });
   }
-  return { atomic,credit,reserve,balance,capture:(u,k)=>finish(u,k,true),release:(u,k)=>finish(u,k,false),
+  return { atomic,credit,reserve,balance,capture:(u,k,note)=>finish(u,k,true,note),release:(u,k)=>finish(u,k,false),
     snapshot:(user)=>({availableRaw:balance(user),heldRaw:pending.get(user).n,
       entries:db.prepare('SELECT reference,delta,note,created_at AS createdAt FROM wallet_entries WHERE user_id=? ORDER BY created_at DESC,rowid DESC LIMIT 100').all(user)}),
   };

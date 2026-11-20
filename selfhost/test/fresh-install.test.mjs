@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, readFileSync, symlinkSync, rmSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -55,9 +55,14 @@ test('new server initializes and serves the complete release using only runtime 
     assert.notEqual(reinit.status,0);
     const customerEmail='public-buyer@example.invalid', customerPassword=randomBytes(24).toString('base64url');
     let code;
-    const identity=openIdentityStore(root,{config:JSON.parse(readFileSync(join(root,'config/runtime.json'),'utf8')),
+    const configPath=join(root,'config/runtime.json'), runtimeConfig=JSON.parse(readFileSync(configPath,'utf8'));
+    const operatorEmail='operator@example.invalid', employeeEmail='staff@example.invalid';
+    runtimeConfig.bindings.RESOURCE_ADMIN_EMAILS += ',' + operatorEmail;
+    writeFileSync(configPath,JSON.stringify(runtimeConfig));
+    const identity=openIdentityStore(root,{config:runtimeConfig,
       outlook:{sendRegistrationCode:async(_email,value)=>{code=value;}}});
     try {
+      for (const email of [operatorEmail,employeeEmail]) assert.equal(identity.create({email,name:'Test',password}).status,201);
       await identity.registration.requestCode(customerEmail,'127.0.0.1');
       assert.equal(identity.registration.register({email:customerEmail,code,password:customerPassword}).status,201);
     } finally {identity.close();}
@@ -119,10 +124,53 @@ test('new server initializes and serves the complete release using only runtime 
     assert.equal(wallet.email,customerEmail);
     for(const path of ['/api/operations/accounts','/api/groups','/__host/template-archive/catalog','/__host/accounts','/api/warehouse','/api/esim/overview','/api/commerce/admin/deposits'])
       assert.equal((await buyer(path)).status,403,path);
+    const adminWallet=JSON.parse((await get('/api/commerce/wallet')).body);
+    assert.equal(adminWallet.canManageAccounts,true);
+    const operatorLogin=await call(port,'/__host/login',{method:'POST',body:new URLSearchParams({email:operatorEmail,password}).toString()});
+    assert.equal(operatorLogin.status,303);
+    const opCookie=operatorLogin.headers['set-cookie'][0].split(';')[0];
+    const operatorWallet=JSON.parse((await call(port,'/api/commerce/wallet',{cookie:opCookie})).body);
+    assert.equal(operatorWallet.role,'admin');
+    assert.equal(operatorWallet.canManageAccounts,false);
+    assert.equal((await call(port,'/__host/payment-review',{cookie:opCookie})).status,200);
+    assert.equal((await call(port,'/__host/accounts',{cookie:opCookie})).status,403);
+    const opPost=(path,data)=>call(port,path,{method:'POST',cookie:opCookie,headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(data)});
+    assert.equal((await opPost('/api/operations/accounts',{email:'newstaff@example.invalid',name:'New staff',password})).status,403);
+    assert.equal((await opPost('/api/commerce/admin/credit',{email:employeeEmail,amount:'50',note:'test',requestId:crypto.randomUUID()})).status,403);
+    const employeeLogin=await call(port,'/__host/login',{method:'POST',body:new URLSearchParams({email:employeeEmail,password}).toString()});
+    const empCookie=employeeLogin.headers['set-cookie'][0].split(';')[0];
+    assert.equal((await call(port,'/api/commerce/deposits',{method:'POST',cookie:empCookie,headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({network:'ETH',amount:10,requestId:crypto.randomUUID()})})).status,403);
+    assert.equal(JSON.parse((await call(port,'/api/commerce/wallet',{cookie:empCookie})).body).availableRaw,0);
     const accounts=JSON.parse((await get('/api/operations/accounts')).body);
     assert.equal(accounts.accounts.find(a=>a.email===customerEmail)?.role,'customer');
     assert.equal(JSON.parse((await buyer('/api/commerce/deposits')).body).orders.length,0);
     assert.deepEqual(JSON.parse((await buyer('/api/esim/purchases')).body).orders,[]);
+
+    const write=(path,cookie,method,data)=>{
+      const body=JSON.stringify(data);
+      return call(port,path,{cookie,method,body,headers:{
+        'Content-Type':'application/json','Content-Length':Buffer.byteLength(body),Origin:origin}});
+    };
+    const staffEmail='employee@example.invalid';
+    const created=await write('/api/operations/accounts',session,'POST',{name:'Test employee',email:staffEmail,password});
+    assert.equal(created.status,201);
+    const staffLogin=await call(port,'/__host/login',{method:'POST',headers:formHeaders,
+      body:new URLSearchParams({email:staffEmail,password}).toString()});
+    const employeeCookie=staffLogin.headers['set-cookie'][0].split(';')[0];
+    // Old clients may still submit a member list. It must not become a buying
+    // restriction or disclose email addresses to staff.
+    const groupPayload={name:'Employee catalog',memberEmails:['other@example.invalid'],
+      products:[{id:'test-product',name:'Test product',supplier:'eSIMAccess'}]};
+    const group=await write('/api/groups',session,'POST',groupPayload);
+    assert.equal(group.status,200,group.body);
+    const groupId=JSON.parse(group.body).id;
+    const staffGroups=JSON.parse((await call(port,'/api/groups',{cookie:employeeCookie})).body);
+    assert.equal(staffGroups.canManage,false);
+    assert.equal(staffGroups.groups[0].products[0].id,'test-product');
+    assert.equal(staffGroups.groups[0].canPurchase,true);
+    assert.ok(!('memberEmails' in staffGroups.groups[0]));
+    assert.equal((await write('/api/groups',employeeCookie,'POST',groupPayload)).status,403);
+    assert.equal((await write('/api/groups',session,'DELETE',{ids:[groupId]})).status,200);
 
   } finally {
     if(child?.exitCode===null) {
