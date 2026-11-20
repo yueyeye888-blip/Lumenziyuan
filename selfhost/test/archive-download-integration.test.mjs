@@ -12,7 +12,7 @@ import { createArchiveDownloads, downloadPriceRaw } from '../commerce/archive-do
 import { handlePrivateTemplateArchive } from '../private-template-archive.mjs';
 
 test(
-  'preview, paid file authorization, owner-scoped resume, independent downloads and unused authorizations',
+  'authenticated preview and paid downloads keep receipts and upload authorization scoped to the account',
   { timeout: 15000 },
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'archive-billing-'));
@@ -39,13 +39,18 @@ test(
     const origin = 'https://example.invalid';
     const server = createServer(async (req, res) => {
       const name = req.headers['x-user'] || 'employee';
-      const user = { id: name, email: name + '@example.invalid', role: name };
+      const user = name === 'guest' ? null : {
+        id: name,
+        email: name + '@example.invalid',
+        role: name === 'agent' ? 'customer' : name,
+        discountBps: name === 'agent' ? 8000 : null,
+      };
       try {
         await handlePrivateTemplateArchive(req, res, {
           root,
           url: new URL(req.url, origin),
           user,
-          config: {},
+          config: { archiveOwnerEmail:'customer@example.invalid' },
           allowedOrigins: new Set([origin]),
           archiveDownloads: billing,
           readBody: async (r) => {
@@ -69,17 +74,44 @@ test(
     const base = '/__host/template-archive',
       path = base + '/files/' + item.id;
     const req = (p, opts) => fetch(url + p, opts);
-    const authorize = (id, pin = '123456') =>
+    const authorize = (id, pin = '123456', account = 'employee', quotedPriceRaw) =>
       req(path + '/authorize', {
         method: 'POST',
-        headers: { Origin: origin, 'content-type': 'application/json' },
-        body: JSON.stringify({ requestId: id, pin }),
+        headers: { Origin: origin, 'content-type': 'application/json', 'x-user': account },
+        body: JSON.stringify({ requestId: id, pin, quotedPriceRaw }),
       });
     try {
       assert.equal((await req(base + '/catalog')).status, 200);
       assert.equal((await req(path)).status, 402);
       assert.equal((await req(path, { method: 'HEAD' })).status, 402);
-      assert.equal((await req(base + '/catalog', { headers: { 'x-user': 'customer' } })).status, 403);
+      const preview = viewer => req(base + '/catalog', { headers: { 'x-user':viewer } });
+      assert.equal((await preview('guest')).status,401);
+      const customerCatalog=await preview('customer');
+      assert.equal(customerCatalog.status,200);
+      assert.equal((await customerCatalog.json()).priceRaw,downloadPriceRaw);
+      assert.equal((await req(path, { headers: { 'x-user':'customer' } })).status,402);
+      assert.equal((await req(path, {
+        method:'PUT', headers:{ Origin:origin, 'x-user':'customer', 'x-lumen-archive-upload':'1' },
+      })).status,403);
+      assert.equal((await authorize(randomUUID(),'123456','customer')).status,402);
+      wallet.credit({ userId:'customer', reference:'seed-customer', amountRaw:downloadPriceRaw });
+      const publicReceipt=await (await authorize(randomUUID(),'123456','customer',downloadPriceRaw)).json();
+      assert.ok(publicReceipt.downloadPath);
+      assert.equal((await req(publicReceipt.downloadPath, { headers:{'x-user':'employee'} })).status,403);
+      const publicDownload=await req(publicReceipt.downloadPath, { headers:{'x-user':'customer'} });
+      assert.equal(publicDownload.status,200);
+      assert.deepEqual(Buffer.from(await publicDownload.arrayBuffer()),bytes);
+      assert.equal(wallet.balance('customer'),0);
+      assert.equal(wallet.snapshot('customer').entries.filter(e=>e.delta===-downloadPriceRaw).length,1);
+      const agentPrice=(await (await preview('agent')).json()).priceRaw;
+      assert.equal(agentPrice,downloadPriceRaw * 0.8);
+      wallet.credit({ userId:'agent', reference:'seed-agent', amountRaw:agentPrice });
+      assert.equal((await authorize(randomUUID(),'123456','agent',downloadPriceRaw)).status,409);
+      const agentReceipt=await (await authorize(randomUUID(),'123456','agent',agentPrice)).json();
+      const agentDownload=await req(agentReceipt.downloadPath, { headers:{'x-user':'agent'} });
+      assert.equal(agentDownload.status,200);
+      assert.deepEqual(Buffer.from(await agentDownload.arrayBuffer()),bytes);
+      assert.equal(wallet.balance('agent'),0);
       assert.equal((await authorize(randomUUID())).status, 402);
       wallet.credit({ userId: 'employee', reference: 'seed', amountRaw: downloadPriceRaw * 2 });
       assert.equal((await authorize(randomUUID(), '000000')).status, 403);

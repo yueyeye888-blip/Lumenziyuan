@@ -105,10 +105,10 @@
     const legacyWallet = items.find((el) => ['我的钱包', '账户余额'].includes(el.textContent.trim()));
     if (legacyWallet) legacyWallet.dataset.lumenLegacyWallet = '';
     if (snapshot?.canManageAccounts && !nav.querySelector('#lumen-employees-link')) {
-      const existing = items.find((el) => ['账号与额度', '员工与额度'].includes(el.textContent.trim()));
+      const existing = items.find((el) => ['账号与额度', '合伙人与额度'].includes(el.textContent.trim()));
       if (existing) {
         existing.dataset.lumenLegacyWallet = '';
-        const staff = link('员工与额度', '/__host/accounts', trigger.className);
+        const staff = link('合伙人与额度', '/__host/accounts', trigger.className);
         staff.id = 'lumen-employees-link';
         const icon = existing.querySelector('svg');
         if (icon) staff.prepend(icon.cloneNode(true));

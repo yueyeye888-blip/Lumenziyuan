@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import SupplierTemplateLibrary from "@/components/supplier-template-library";
 import { MarketTableHost, useMarketTable, type MarketTableOptions } from "@/components/market-table-host";
+import { ResourceMarketDirectory, MarketCategoryHeader, useResourceMarket, matchesMarketBatch, type MarketCategoryId } from "@/components/resource-market";
 import { mailStatus } from "@/lib/mail-status.mjs";
 import {
   AlertTriangle,
@@ -408,6 +409,8 @@ export default function Home() {
     | "security"
   >("store");
   const marketTableEnabled = useMarketTable();
+  const market = useResourceMarket(() => setView("store"));
+  const showEsimMarket = view === "favorites" || (view === "store" && market.category?.id === "esim");
   const [activeGroup, setActiveGroup] = useState("全部资源");
   const [query, setQuery] = useState("");
   const [favoriteState, setFavoriteState] = useState<{ key: string; items: string[] }>({ key: "", items: [] });
@@ -494,7 +497,7 @@ export default function Home() {
   }, [activeGroup, maxDuration, maxPrice, minDataGb, query, view]);
 
   useEffect(() => {
-    if (marketTableEnabled || (view !== "store" && view !== "favorites")) return;
+    if (marketTableEnabled || !showEsimMarket) return;
     let active = true;
     setSyncing(true);
     const timer = window.setTimeout(() => {
@@ -548,6 +551,7 @@ export default function Home() {
     catalogOffset,
     favorites,
     marketTableEnabled,
+    showEsimMarket,
     maxDuration,
     maxPrice,
     minDataGb,
@@ -656,9 +660,9 @@ export default function Home() {
           </p>
           <NavItem
             icon={<LayoutDashboard size={18} />}
-            label="资源商城"
+            label="资源市场"
             active={view === "store"}
-            onClick={() => setView("store")}
+            onClick={() => { setMobileNav(false); market.choose(null); }}
           />
           <NavItem
             icon={<PackageCheck size={18} />}
@@ -773,8 +777,11 @@ export default function Home() {
             />
             <input
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索国家、套餐或供应商…"
+              onChange={(e) => {
+                setQuery(e.target.value);
+                if (view === "store" && market.category?.id !== "esim" && e.target.value.trim()) market.choose("esim");
+              }}
+              placeholder="搜索 eSIM 国家、套餐或运营商…"
               className="h-11 w-full rounded-xl border border-[#e2e7ef] bg-[#f8fafc] pl-10 pr-4 text-sm outline-none transition focus:border-[#87a3d9] focus:bg-white focus:ring-4 focus:ring-blue-50"
             />
           </div>
@@ -802,7 +809,7 @@ export default function Home() {
                       ? "资源管理员 · 全部权限"
                       : isCustomer
                         ? "用户账号 · 仅本人资源"
-                        : "员工账号 · 仅本人资源"}
+                        : "合伙人账号 · 仅本人资源"}
                   </span>
                 </span>
                 <ChevronDown
@@ -866,8 +873,16 @@ export default function Home() {
           </div>
         </header>
 
-        {(view === "store" || view === "favorites") && (
+        {view === "store" && !market.category && <ResourceMarketDirectory choose={market.choose} />}
+        {view === "store" && market.category && (
+          <MarketCategoryHeader label={market.category.label} onBack={() => market.choose(null)} />
+        )}
+        {view === "store" && market.category && market.category.id !== "esim" && (
+          isCustomer ? <RestrictedWarehouse marketPreview /> : viewer && <WarehouseView key={market.category.id} marketCategory={market.category.id} />
+        )}
+        {showEsimMarket && (
           <StoreView
+            hideHeading={view === "store"}
             marketOptions={marketTableEnabled ? {
               scope: view === "favorites" ? "favorites" : activeGroupConfig.id,
               scopeLabel: view === "favorites" ? "收藏的套餐" : activeGroupConfig.name,
@@ -974,6 +989,7 @@ export default function Home() {
 }
 
 type StoreViewProps = {
+  hideHeading?: boolean;
   marketOptions?: MarketTableOptions;
   activeGroup: string;
   setActiveGroup: (value: string) => void;
@@ -1006,6 +1022,7 @@ type StoreViewProps = {
 
 function StoreView(props: StoreViewProps) {
   const {
+    hideHeading,
     marketOptions,
     activeGroup,
     setActiveGroup,
@@ -1038,14 +1055,14 @@ function StoreView(props: StoreViewProps) {
     minDataGb !== "0" || maxDuration !== "0" || maxPrice !== "0";
   return (
     <div className="mx-auto max-w-[1480px] px-5 py-6 md:px-8 md:py-8">
-      <section className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+      {(!hideHeading || isAdmin || favorites.length > 0) && <section className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
         <div>
           {!marketOptions && <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-[#6582bd]">
             {favoriteOnly ? "我的收藏" : "资源商城"}
           </p>}
-          <h1 className="text-2xl font-semibold tracking-tight md:text-[30px]">
-            {favoriteOnly ? "常用套餐" : marketOptions ? "资源市场" : "选择需要的资源"}
-          </h1>
+          {!hideHeading && <h1 className="text-2xl font-semibold tracking-tight md:text-[30px]">
+            {favoriteOnly ? "常用套餐" : "资源市场"}
+          </h1>}
           {!marketOptions && <p className="mt-2 text-sm text-slate-500">
             {isAdmin
               ? "按当前账号显示结算价，付款时 1 U 抵 1 美元。"
@@ -1070,7 +1087,7 @@ function StoreView(props: StoreViewProps) {
             收藏 {favorites.length}
           </button>
         </div>
-      </section>
+      </section>}
 
       {!marketOptions && isAdmin && (
         <section className="mb-5 grid gap-3 sm:grid-cols-2">
@@ -1130,7 +1147,7 @@ function StoreView(props: StoreViewProps) {
             <span className="px-2 text-xs text-slate-400">
               {isAdmin
                 ? "尚未建立业务分组，可点击右上角创建"
-                : isCustomer ? "业务分组仅向员工开放" : "管理员尚未配置业务分组"}
+                : isCustomer ? "业务分组仅向合伙人开放" : "管理员尚未配置业务分组"}
             </span>
           )}
         </div>
@@ -1391,7 +1408,7 @@ function LegacyStoreView(props: {
       <section className="mb-7 flex flex-col justify-between gap-4 md:flex-row md:items-end">
         <div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-[#6582bd]">
-            {favoriteOnly ? "我的收藏" : "员工资源商城"}
+            {favoriteOnly ? "我的收藏" : "合伙人资源商城"}
           </p>
           <h1 className="text-2xl font-semibold tracking-tight md:text-[30px]">
             {favoriteOnly ? "常用套餐快捷入口" : "按需购买全球数字资源"}
@@ -1424,7 +1441,7 @@ function LegacyStoreView(props: {
           iconClass="bg-[#e9f7f1] text-[#208267]"
           label="当前账号可见资源"
           value={`${historyTotal} 件`}
-          note="管理员看全部，员工仅看本人购买"
+          note="管理员看全部，合伙人仅看本人购买"
         />
         <Metric
           icon={<Zap size={19} />}
@@ -2039,7 +2056,7 @@ function QuotaView({ overview }: { overview: PlatformOverview }) {
                 )
               : "待管理员分配"
           }
-          note="员工额度不会超过供应商主账号余额"
+          note="合伙人额度不会超过供应商主账号余额"
         />
         <Metric
           icon={<CreditCard size={19} />}
@@ -2122,7 +2139,7 @@ function QuotaView({ overview }: { overview: PlatformOverview }) {
       </div>
       {overview.viewer?.isAdmin && (
         <div className="mt-5 rounded-xl bg-[#f4f7fd] p-4 text-xs text-[#425b88]">
-          当前为管理员账号。员工额度分配入口位于“账号与额度”，供应商主账号余额不会直接成为员工可用额度。
+          当前为管理员账号。合伙人额度分配入口位于“账号与额度”，供应商主账号余额不会直接成为合伙人可用额度。
         </div>
       )}
     </div>
@@ -2401,7 +2418,7 @@ function SecurityView({ overview }: { overview: PlatformOverview }) {
               {overview.viewer?.email}
             </p>
             <span className="mt-4 inline-flex rounded-full bg-[#eef3fb] px-3 py-1 text-[11px] text-[#4267ae]">
-              {overview.viewer?.isAdmin ? "资源管理员" : overview.viewer?.role === "customer" ? "用户账号" : "员工账号"}
+              {overview.viewer?.isAdmin ? "资源管理员" : overview.viewer?.role === "customer" ? "用户账号" : "合伙人账号"}
             </span>
           </div>
         </div>
@@ -2478,7 +2495,7 @@ function AdminView({ overview }: { overview: PlatformOverview }) {
             管理员控制台
           </p>
           <h1 className="text-2xl font-semibold tracking-tight md:text-[30px]">
-            平台钱包、员工额度与购买记录
+            平台钱包、合伙人额度与购买记录
           </h1>
           <p className="mt-2 text-sm text-slate-500">
             查看供应商余额与采购记录，或给用户的站内账户添加余额。
@@ -2642,7 +2659,7 @@ function AdminView({ overview }: { overview: PlatformOverview }) {
             </p>
           </div>
           <button onClick={() => window.location.assign("/__host/accounts")} className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-medium text-slate-600">
-            员工与额度
+            合伙人与额度
           </button>
         </div>
         <div className="rounded-xl border border-dashed border-slate-200 py-10 text-center text-sm text-slate-500">
@@ -3511,7 +3528,7 @@ function RenewModal({
             />
           </label>
           <div className="rounded-xl bg-[#fffaf3] p-4 text-xs leading-5 text-[#835d34]">
-            当前站点尚未启用员工额度账本，因此这里只完成续订确认流程，不会向供应商发送付费订单。额度与真实下单启用后，续订金额将从对应平台额度扣除。
+            当前站点尚未启用合伙人额度账本，因此这里只完成续订确认流程，不会向供应商发送付费订单。额度与真实下单启用后，续订金额将从对应平台额度扣除。
           </div>
         </div>
         <div className="flex justify-end gap-3 border-t border-slate-100 p-5">
@@ -3767,20 +3784,20 @@ function WarehouseStatusManager({
   );
 }
 
-function RestrictedWarehouse() {
+function RestrictedWarehouse({ marketPreview = false }: { marketPreview?: boolean }) {
   return (
     <div className="mx-auto max-w-[1480px] px-5 py-7 md:px-8 md:py-9">
-      <h1 className="text-2xl font-semibold tracking-tight md:text-[30px]">库存仓库与资源认领</h1>
+      {!marketPreview && <h1 className="text-2xl font-semibold tracking-tight md:text-[30px]">库存仓库与资源认领</h1>}
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
         <LockKeyhole size={20} className="text-[#4267ae]" />
-        <h2 className="mt-3 text-base font-semibold">员工账号专用</h2>
-        <p className="mt-2 text-sm text-slate-500">查看公司库存和认领记录需要员工权限。</p>
+        <h2 className="mt-3 text-base font-semibold">合伙人账号专用</h2>
+        <p className="mt-2 text-sm text-slate-500">查看公司库存和认领记录需要合伙人权限。</p>
       </section>
     </div>
   );
 }
 
-function WarehouseView() {
+function WarehouseView({ marketCategory }: { marketCategory?: MarketCategoryId }) {
   const [data, setData] = useState<WarehouseResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -3915,11 +3932,12 @@ function WarehouseView() {
     await load();
   };
 
+  const batches = (data?.batches || []).filter((batch) => !marketCategory || matchesMarketBatch(marketCategory, batch));
   const emailLabel = (status: string) => mailStatus(status).label;
 
   return (
     <div className="mx-auto max-w-[1480px] px-5 py-7 md:px-8 md:py-9">
-      <section className="mb-7 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+      {!marketCategory && <section className="mb-7 flex flex-col justify-between gap-4 md:flex-row md:items-end">
         <div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-[#6582bd]">
             无 API 平台
@@ -3928,7 +3946,7 @@ function WarehouseView() {
             库存仓库与资源认领
           </h1>
           <p className="mt-2 text-sm text-slate-500">
-            管理员可提前入库，员工按需单个或批量认领。
+            管理员可提前入库，合伙人按需单个或批量认领。
           </p>
         </div>
         <div
@@ -3939,9 +3957,9 @@ function WarehouseView() {
             ? "邮件自动交付已启用"
             : "邮件通道待配置，认领仍会保存在站内"}
         </div>
-      </section>
+      </section>}
 
-      {data?.viewer.isAdmin ? (
+      {!marketCategory && (data?.viewer.isAdmin ? (
         <section className="mb-7 grid gap-4 sm:grid-cols-3">
           <Metric
             icon={<Archive size={19} />}
@@ -3984,7 +4002,7 @@ function WarehouseView() {
             项我的认领
           </span>
         </section>
-      )}
+      ))}
 
       {error && (
         <div className="mb-5 rounded-xl border border-[#f0d9d1] bg-[#fff5f1] p-4 text-sm text-[#9b5444]">
@@ -4013,9 +4031,9 @@ function WarehouseView() {
                 刷新库存
               </button>
             </div>
-            {data?.batches.length ? (
+            {batches.length ? (
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {data.batches.map((batch) => (
+                {batches.map((batch) => (
                   <article
                     key={batch.batchId}
                     className="rounded-[20px] border border-[#e3e8f0] bg-white p-5 shadow-[0_4px_22px_rgba(28,48,82,.04)]"
@@ -4064,6 +4082,7 @@ function WarehouseView() {
             )}
           </section>
 
+          {!marketCategory && <>
           <WarehouseStatusManager
             claims={data?.claims || []}
             onManage={(claim) =>
@@ -4289,6 +4308,7 @@ function WarehouseView() {
               </form>
             </section>
           )}
+          </>}
         </>
       )}
 

@@ -95,5 +95,5 @@ export async function migrateQuotas(d1,wallet) {
     AND NOT EXISTS(SELECT 1 FROM esim_renewal_lines r WHERE r.user_id=q.user_id AND r.status IN ('queued','submitting','uncertain')
       AND NOT EXISTS(SELECT 1 FROM esim_commerce_payments c WHERE c.payment_id=r.id))
     GROUP BY q.user_id HAVING SUM(q.amount)>0`).all();
-  for(const r of rows.results) wallet.credit({userId:r.user_id,reference:'legacy-quota:'+r.user_id,amountRaw:r.amount,note:'原员工额度转入'});
+  for(const r of rows.results) wallet.credit({userId:r.user_id,reference:'legacy-quota:'+r.user_id,amountRaw:r.amount,note:'原合伙人额度转入'});
 }

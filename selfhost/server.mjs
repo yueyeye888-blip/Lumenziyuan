@@ -52,7 +52,7 @@ const commerceTimer=setInterval(reconcileCommerce,30_000);
 const operations = makeResourceOperations({ root, config, mf, identities, readBody: body, outlook, purchases, wallet });
 function returnPath(value) {
   const clean = safeReturn(value);
-  const permitted = /^\/__host\/(?:accounts|wallet|shop|security|payment-review)(?:\?|$)/;
+  const permitted = /^\/__host\/(?:accounts|wallet|shop|security|payment-review|template-archive\/?)(?:\?|$)/;
   if (clean === '/' && typeof value === 'string' && permitted.test(value) && !/[\\\r\n]/.test(value)) {
     return value;
   }
@@ -64,7 +64,7 @@ function customerDestination(url) {
     if (params.get('section') !== 'wallet') return '/';
     return '/?section=wallet' + (params.get('action') === 'recharge' ? '&action=recharge' : '');
   }
-  const pages = new Set(['/','/__host/wallet','/__host/security','/mail-delivery']);
+  const pages = new Set(['/','/__host/wallet','/__host/security','/__host/template-archive','/__host/template-archive/','/mail-delivery']);
   const orderPage = url.pathname.startsWith('/address-orders/') && customerWorkbenchRoute('GET',url.pathname);
   return pages.has(url.pathname) || orderPage ? url.pathname + url.search : '/';
 }
@@ -85,7 +85,7 @@ const server = https.createServer(tls, async (req, res) => {
     const url = new URL(req.url, origin);
     const allowedOrigins = new Set([origin, ...(config.aliasOrigins || [])]);
     if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin && !allowedOrigins.has(req.headers.origin)) return json(res, 403, { error: '请求来源不匹配' });
-    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '1.5.0' });
+    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '1.6.0' });
     // Machine callbacks use the existing order secret, never a browser session.
     if (url.pathname === '/api/address-orders/callback') {
       if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
@@ -152,6 +152,7 @@ const server = https.createServer(tls, async (req, res) => {
     const customer = user.role === 'customer';
     if (customer && req.method === 'GET' && url.pathname === '/__host/shop') return redirect(res, customerDestination(url));
     if (await commerce.route(req,res,url,user)) return;
+    if (await handlePrivateTemplateArchive(req, res, { root, url, user, allowedOrigins, config, archiveDownloads, purchases, readBody:body })) return;
     if (customer && !(customerEsimRoute(req.method, url.pathname) || customerWorkbenchRoute(req.method, url.pathname))) {
       return json(res, 403, { error: '此账号无权访问该资源。' });
     }
@@ -170,7 +171,6 @@ const server = https.createServer(tls, async (req, res) => {
     if (await catalog.route(req, res, url, session.user)) return;
     if (await purchases.route(req, res, url, session.user)) return;
     if (await operations.route(req, res, url, session.user)) return;
-    if (await handlePrivateTemplateArchive(req, res, { root, url, user: session.user, allowedOrigins, config, archiveDownloads, purchases, readBody:body })) return;
     if (req.method === 'GET' || req.method === 'HEAD') {
       const assetRoot = path.join(root, 'dist', 'client');
       const asset = path.resolve(assetRoot, '.' + decodeURIComponent(url.pathname));
@@ -207,6 +207,6 @@ const server = https.createServer(tls, async (req, res) => {
     console.error(JSON.stringify({ event: 'request_failed', path: req.url?.split('?')[0], time: new Date().toISOString() }));
   }
 });
-server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '1.5.0', port: config.port || 8443 })));
+server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '1.6.0', port: config.port || 8443 })));
 const cleanup = setInterval(() => { identities.cleanup(); for (const [key, value] of attempts) if (value.until < Date.now()) attempts.delete(key); }, 60_000);
 for (const event of ['SIGTERM', 'SIGINT']) process.on(event, () => { clearInterval(cleanup); clearInterval(commerceTimer); deposits.stop(); operations.close(); server.close(async () => { await mf.dispose(); process.exit(0); }); });

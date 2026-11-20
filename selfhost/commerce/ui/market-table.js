@@ -44,37 +44,22 @@
     return label ? numericText.format(plan.duration) + ' ' + label : '—';
   }
 
-  function safeLogo(value) {
-    if (typeof value !== 'string' || !value.trim()) return '';
-    try {
-      const url = new URL(value, location.origin);
-      if (url.protocol === 'https:' && (url.origin === location.origin || /(^|\.)(esimaccess\.com|qrsim\.net)$/.test(url.hostname))) {
-        return url.href;
-      }
-    } catch {
-      // Missing or malformed supplier images use the country code.
-    }
-    return '';
+  function loadFlagStyles() {
+    if (document.querySelector('link[data-market-flags]')) return;
+    const stylesheet = node('link');
+    stylesheet.rel = 'stylesheet';
+    stylesheet.href = '/__host/market-flags.css';
+    stylesheet.dataset.marketFlags = '';
+    document.head.append(stylesheet);
   }
 
   function regionMark(plan) {
-    const codes = plan.regionCodes;
-    const code = Array.isArray(codes) && codes.length === 1 ? codes[0] : plan.location;
-    const single = /^[A-Z]{2}$/.test(code || '') && (!Array.isArray(codes) || codes.length <= 1);
-    const fallback = single ? code : '多区';
-    const mark = node('span', fallback, 'lmt-region-mark');
+    const codes = Array.isArray(plan.regionCodes) ? plan.regionCodes : [];
+    const code = codes.length === 1 ? codes[0] : !codes.length ? plan.location : '';
+    const mark = node('span', null, 'lmt-region-mark');
     mark.setAttribute('aria-hidden', 'true');
-    const src = single ? safeLogo(plan.countryLogo) : '';
-    if (src) {
-      const picture = node('img');
-      picture.alt = '';
-      picture.loading = 'lazy';
-      picture.referrerPolicy = 'no-referrer';
-      picture.addEventListener('load', () => mark.replaceChildren(picture), { once: true });
-      picture.addEventListener('error', () => picture.remove(), { once: true });
-      picture.src = src;
-      mark.append(picture);
-    }
+    if (/^[A-Z]{2}$/.test(code || '')) mark.dataset.country = code;
+    mark.append(node('span', null, 'lmt-region-globe'));
     return mark;
   }
 
@@ -85,6 +70,7 @@
 
   function mount(container, { load, checkout, toggleFavorite, resetQuery, selectedChanged } = {}) {
     if (typeof load !== 'function') throw new TypeError('A catalog loader is required');
+    loadFlagStyles();
     const id = 'lumen-market-' + ++nextTable;
     const root = node('section', null, 'lmt');
     root.setAttribute('aria-label', 'eSIM 套餐列表');
@@ -119,20 +105,22 @@
         </div>
       </form>
       <section class="lmt-results" aria-labelledby="${id}-heading">
-        <header class="lmt-results-head">
-          <div>
-            <h2 id="${id}-heading" tabindex="-1">eSIM 套餐</h2>
-            <p class="lmt-result-count" role="status" aria-live="polite">正在读取套餐…</p>
-          </div>
-          <label class="lmt-sort-mobile">排序<select aria-label="套餐排序"></select></label>
-        </header>
-        <div class="lmt-checkout">
-          <div class="lmt-metric lmt-balance"><span>可用余额</span><strong>—</strong></div>
-          <div class="lmt-metric lmt-selection"><span>已选套餐</span><strong>0</strong></div>
-          <div class="lmt-metric lmt-total"><span>预估合计</span><strong>—</strong></div>
-          <div class="lmt-checkout-actions">
-            <button type="button" class="lmt-text lmt-clear" hidden>清空</button>
-            <button type="button" class="lmt-primary lmt-pay" disabled>批量结算</button>
+        <div class="lmt-results-toolbar">
+          <header class="lmt-results-head">
+            <div>
+              <h2 id="${id}-heading" tabindex="-1">eSIM 套餐</h2>
+              <p class="lmt-result-count" role="status" aria-live="polite">正在读取套餐…</p>
+            </div>
+            <label class="lmt-sort-mobile">排序<select aria-label="套餐排序"></select></label>
+          </header>
+          <div class="lmt-checkout">
+            <div class="lmt-metric lmt-balance"><span>可用余额</span><strong>—</strong></div>
+            <div class="lmt-metric lmt-selection"><span>已选套餐</span><strong>0</strong></div>
+            <div class="lmt-metric lmt-total"><span>预估合计</span><strong>—</strong></div>
+            <div class="lmt-checkout-actions">
+              <button type="button" class="lmt-text lmt-clear" hidden>清空</button>
+              <button type="button" class="lmt-primary lmt-pay" disabled>批量结算</button>
+            </div>
           </div>
         </div>
         <p class="lmt-selection-feedback" role="status" aria-live="polite" hidden></p>
@@ -414,7 +402,9 @@
       const mobile = [formatVolume(plan), formatDuration(plan), plan.regionName || plan.countryName || plan.location].filter(Boolean);
       info.append(node('span', mobile.join(' · '), 'lmt-mobile-meta'));
       if (shortNetwork) info.append(node('span', shortNetwork, 'lmt-network'));
-      planCell.append(regionMark(plan), info);
+      const identity = node('div', null, 'lmt-plan-identity');
+      identity.append(regionMark(plan), info);
+      planCell.append(identity);
 
       const price = node('td', money(plan.priceRaw), 'lmt-price');
       const data = node('td', formatVolume(plan), 'lmt-data');

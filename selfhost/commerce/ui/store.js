@@ -271,7 +271,7 @@ async function loadWallet() {
     ['时间', '交易说明', '变动金额'],
     wallet.entries.map((e) => [
       ledgerDate(e.createdAt),
-      e.note,
+      e.reference.startsWith('legacy-quota:') ? '原合伙人额度转入' : e.note,
       elem('strong', (e.delta > 0 ? '+' : '') + money(e.delta), e.delta > 0 ? 'positive' : 'numeric'),
     ]),
     '暂无余额明细',

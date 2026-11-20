@@ -12,7 +12,7 @@ declare global {
   }
 }
 
-export default function PersonalDetailsForm({ selectedTemplate }: { selectedTemplate: Pick<SupplierTemplate, "id" | "name"> | null }) {
+export default function PersonalDetailsForm({ selectedTemplate, price }: { selectedTemplate: Pick<SupplierTemplate, "id" | "name"> | null; price?: string | null }) {
   const [profile, setProfile] = useState<PersonalDetails>({ ...EMPTY_PERSONAL_DETAILS, addressLines: ["", "", ""] });
   const [message, setMessage] = useState("");
   const [billed, setBilled] = useState(false);
@@ -126,7 +126,7 @@ export default function PersonalDetailsForm({ selectedTemplate }: { selectedTemp
   };
 
   return <form onSubmit={(event) => { event.preventDefault(); void submitProfile(); }} autoComplete="off" aria-label="填写个人资料" className="mb-6 rounded-2xl border border-[#dce5f3] bg-white p-5 sm:p-6">
-    <div className="mb-5"><h2 className="text-base font-semibold text-[#243d64]">填写个人资料</h2><p className="mt-1 text-xs leading-5 text-slate-500">{billed && "标准价 10 U，代理折扣在付款时显示。处理失败会退回余额。"}地址正文仅用于本次自动处理，不写入订单记录；接收邮箱请每次手动输入。</p></div>
+    <div className="mb-5"><h2 className="text-base font-semibold text-[#243d64]">填写个人资料</h2><p className="mt-1 text-xs leading-5 text-slate-500">地址正文仅用于本次自动处理，不写入订单记录；接收邮箱请每次手动输入。</p></div>
     <fieldset className="min-w-0 space-y-5">
       <label className="block"><span className="mb-2 block text-sm font-medium">姓名</span><input required maxLength={120} autoComplete="off" value={profile.fullName} onChange={(event) => change("fullName", event.target.value)} placeholder="请输入本人的英文姓名或拼音" className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-[#87a3d9]" /><span className="mt-2 block text-xs leading-5 text-slate-400">建议使用大写拼音；可包含空格、连字符和撇号，不得包含表情。</span></label>
       <div><p className="mb-2 text-sm font-medium">地址模式</p><div className="flex flex-wrap gap-2" role="group" aria-label="地址填写模式"><button type="button" aria-pressed={mode === "manual"} onClick={() => setMode("manual")} className={`${mode === "manual" ? "border-[#6385bd] bg-[#edf3fc] text-[#315c9f]" : "border-slate-200 text-slate-500"} rounded-xl border px-4 py-2.5 text-xs font-medium`}>填写地址信息</button><button type="button" aria-pressed={mode === "translate"} onClick={() => setMode("translate")} className={`${mode === "translate" ? "border-[#6385bd] bg-[#edf3fc] text-[#315c9f]" : "border-slate-200 text-slate-500"} inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-medium`}><Languages size={15} />翻译并规范已有地址</button></div></div>
@@ -134,7 +134,7 @@ export default function PersonalDetailsForm({ selectedTemplate }: { selectedTemp
         <h3 className="text-sm font-semibold text-[#315c9f]">翻译并规范已有地址</h3><p className="mt-2 text-xs leading-6 text-slate-500">粘贴你自己的中文或本地语言地址。AI 只翻译、去重并整理为三行英文，不会补造缺失的门牌、地区或邮编。</p>
         <label className="mt-4 block"><span className="mb-2 block text-xs font-medium text-slate-600">地址原文</span><textarea rows={4} maxLength={SOURCE_ADDRESS_LIMIT} value={sourceAddress} onChange={(event) => changeSource(event.target.value)} placeholder="粘贴你已有的真实地址；缺失的信息不必填写" className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm leading-6 outline-none focus:border-[#87a3d9]" /></label>
         <div className="mt-2 flex items-center justify-between gap-3 text-[10px] text-slate-400"><span>仅发送地址原文至 OpenAI，姓名和邮箱不参与翻译。</span><span className="shrink-0">{sourceAddress.length} / {SOURCE_ADDRESS_LIMIT}</span></div>
-        {configured === false && <p role="status" className="mt-3 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800">{translationRestricted ? "AI 地址翻译仅向员工开放。你可以手动填写三行英文地址。" : "AI 翻译尚未启用，请管理员完成 OpenAI 服务配置。你仍可手动填写三行英文地址。"}</p>}
+        {configured === false && <p role="status" className="mt-3 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800">{translationRestricted ? "AI 地址翻译仅向合伙人开放。你可以手动填写三行英文地址。" : "AI 翻译尚未启用，请管理员完成 OpenAI 服务配置。你仍可手动填写三行英文地址。"}</p>}
         {configurationError && <p className="mt-3 text-xs text-amber-700">{configurationError}</p>}
         <div className="mt-4 flex items-center gap-3"><button type="button" disabled={!configured || translating || sourceAddress.trim().length < 3} onClick={() => void translate()} className="inline-flex items-center gap-2 rounded-xl bg-[#1d3b72] px-4 py-2.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-40">{translating ? <Loader2 size={14} className="animate-spin" /> : <Languages size={14} />}{translating ? "正在翻译并整理" : "翻译并整理为三行英文"}</button>{translating && <button type="button" onClick={() => { requestRef.current?.abort(); requestRef.current = null; setTranslating(false); }} className="inline-flex items-center gap-1 text-xs text-slate-500"><X size={13} />取消</button>}</div>
         {translationError && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-xs leading-5 text-red-700">{translationError}</p>}
@@ -153,7 +153,7 @@ export default function PersonalDetailsForm({ selectedTemplate }: { selectedTemp
       <div><h3 className="mb-2 text-sm font-medium">填写地址信息</h3><p className="mb-3 text-xs leading-5 text-slate-400">按三行填写英文地址，每行最多 160 字符；缺失的第二、三行可留空，请勿补造信息。</p><div className="space-y-3">{profile.addressLines.map((line, i) => <label key={i} className="block"><span className="mb-1.5 block text-xs text-slate-500">地址第 {i + 1} 行{i > 0 ? "（可留空）" : ""}</span><input required={i === 0} maxLength={ADDRESS_LINE_LIMIT} autoComplete="off" value={line} onChange={(event) => changeLine(i, event.target.value)} placeholder={["门牌、房间、楼宇、街道等已有信息", "地区、城市等已有信息", "省州、邮编、国家等已有信息"][i]} className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-[#87a3d9]" /></label>)}</div></div>
       <label className="block"><span className="mb-2 block text-sm font-medium">接收邮箱</span><input required type="email" maxLength={254} autoComplete="off" value={profile.recipientEmail} onChange={(event) => change("recipientEmail", event.target.value)} placeholder="请手动填写本次接收邮箱" className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-[#87a3d9]" /><span className="mt-2 block text-xs text-slate-400">请每次手动填写；不会使用登录邮箱或历史邮箱作为默认值。</span></label>
       {message && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-xs leading-5 text-emerald-800">{message}</p>}
-      <button type="submit" disabled={submitting || !selectedTemplate} className="h-11 rounded-xl bg-[#1d3b72] px-6 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">{submitting ? "提交中…" : selectedTemplate ? (billed ? "确认价格并生成" : "提交资料") : "请先选择模版"}</button>
+      <button type="submit" disabled={submitting || !selectedTemplate} className="h-11 rounded-xl bg-[#1d3b72] px-6 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">{submitting ? "提交中…" : selectedTemplate ? (billed ? (price ? `支付 ${price} U 并生成` : "查看价格并生成") : "提交资料") : "请先选择模版"}</button>
     </fieldset>
   </form>;
 }

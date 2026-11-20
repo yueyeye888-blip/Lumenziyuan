@@ -133,7 +133,7 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       const {status,data} = await mailRecords(user); json(res,status,data); return true;
     }
     if (['/__host/accounts','/__host/accounts.css'].includes(url.pathname) && req.method === 'GET') {
-      if (!canManageAccounts(config,user)) { json(res,403,{error:'仅超级管理员可管理员工与额度。'}); return true; }
+      if (!canManageAccounts(config,user)) { json(res,403,{error:'仅超级管理员可管理合伙人与额度。'}); return true; }
       if (url.pathname.endsWith('.css')) {
         res.writeHead(200, {'content-type':'text/css; charset=utf-8','cache-control':'private, no-cache','x-content-type-options':'nosniff'});
         res.end(readFileSync(`${root}/resource-operations/accounts.css`)); return true;
@@ -159,13 +159,13 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       }
       const account=identities.byEmail(email);
       if (!account || account.enabled === false || admin(account)) {
-        json(res,404,{error:'请选中启用的员工或普通用户账号。'}); return true;
+        json(res,404,{error:'请选中启用的合伙人或普通用户账号。'}); return true;
       }
       identities.setDiscount(account.id,fields.discountBps);
       json(res,200,{email:account.email,discountBps:fields.discountBps}); return true;
     }
     if (url.pathname === '/api/operations/accounts') {
-      if (!canManageAccounts(config,user)) { json(res,403,{error:'仅超级管理员可管理员工与额度。'}); return true; }
+      if (!canManageAccounts(config,user)) { json(res,403,{error:'仅超级管理员可管理合伙人与额度。'}); return true; }
       if (req.method === 'GET') {
         json(res,200,{accounts:identities.list().map(account => ({email:account.email,name:account.name,availableRaw:wallet.balance(account.id),enabled:account.enabled !== false,discountBps:admin(account) ? null : account.discountBps,admin:admin(account),role:admin(account) ? 'admin' : account.role === 'customer' ? 'customer' : 'employee'}))}); return true;
       }

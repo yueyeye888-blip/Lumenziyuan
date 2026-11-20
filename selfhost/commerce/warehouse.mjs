@@ -144,7 +144,7 @@ export function createWarehouse({wallet,db,mf,config,outlook,verifyPin,fetchImpl
   }
   async function route(req,res,url,user) {
     if (!['/api/warehouse','/api/warehouse/claim'].includes(url.pathname)) return false;
-    if (user.role==='customer') return send(res,403,{error:'此库存仅向员工开放。'});
+    if (user.role==='customer') return send(res,403,{error:'此库存仅向合伙人开放。'});
     try {
       if (url.pathname==='/api/warehouse' && req.method==='GET') {
         const result=await mf.dispatchFetch(new URL('/api/warehouse',config.origin).href,{headers:trustedHeaders({},user)});

@@ -28,7 +28,7 @@
     const units = new Intl.NumberFormat('en-US', {maximumFractionDigits: 4});
     const amount = (raw) => units.format(raw / 10000);
     const money = (raw) => amount(raw) + ' U';
-    const roles = {admin: '管理员', employee: '员工', customer: '平台用户'};
+    const roles = {admin: '管理员', employee: '合伙人', customer: '平台用户'};
     let accounts, role = 'employee', target, discountTarget;
 
     function notice(message, failure = false) {
@@ -133,9 +133,9 @@
       empty.hidden = Boolean(matches.length);
       empty.textContent = query ? '未找到匹配的账号。' : {
         all: '暂无账号。',
-        employee: '暂无员工。点击「创建员工」添加第一个账号。',
+        employee: '暂无合伙人。点击「创建合伙人」添加第一个账号。',
         customer: '暂无通过邮箱注册的平台用户。',
-        agent: '暂无代理。在员工或平台用户的账号旁点击「设置代理」。',
+        agent: '暂无代理。在合伙人或平台用户的账号旁点击「设置代理」。',
       }[role];
     }
 
@@ -208,7 +208,7 @@
       await post('/api/operations/accounts', fields);
       search.value = '';
       selectTab('employee');
-      return '已创建员工账号 ' + fields.email + '。';
+      return '已创建合伙人账号 ' + fields.email + '。';
     });
     credit.elements.amount.oninput = () => {
       const delta = Math.round(Number(credit.elements.amount.value) * 10000);
@@ -342,7 +342,7 @@
           const email = element('button','发送邮箱'); email.type = 'button'; email.style.cssText = primaryStyle;
           if (heading.closest('[data-customer-workbench]')) {
             email.disabled = true;
-            email.textContent = '发送邮箱（员工权限）';
+            email.textContent = '发送邮箱（合伙人权限）';
             email.style.cssText = buttonStyle + ';cursor:default;opacity:.7';
           } else {
             email.addEventListener('click',() => openEmailDialog(info));

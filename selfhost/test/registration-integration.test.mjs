@@ -42,11 +42,11 @@ test('email OTP persists across restart, signs in only a customer and cannot be 
   f.restart();
   assert.equal(f.store.lookup(token).user.role,'customer');
   assert.equal(f.store.registration.register({email,code,password}).status,400);
-  assert.equal(f.store.create({email,name:'员工',password}).status,409);
+  assert.equal(f.store.create({email,name:'合伙人',password}).status,409);
 });
 test('reserved, disabled and staff emails cannot become public accounts',async t=>{
   const f=fixture(t);
-  f.store.create({email:'staff@example.org',name:'员工',password});
+  f.store.create({email:'staff@example.org',name:'合伙人',password});
   for (const email of ['staff@example.org','Alias@example.org','owner@example.org']) {
     assert.equal((await f.store.registration.requestCode(email,'192.0.2.3')).status,200);
     assert.equal(f.store.registration.register({email,code:'000000',password}).status,400);
@@ -75,7 +75,7 @@ test('resend invalidates earlier challenge, limits guessing and fails closed whe
   assert.equal(f.store.registration.register({email,code:attempted,password}).status,400);
 });
 test('only an explicit customer API surface is allowed and a remote browser cannot choose its rate-limit IP',()=>{
-  for (const path of ['/api/settings/telegram','/__host/template-archive/catalog','/api/esim/purchase-quota','/api/esim/overview','/api/groups']) {
+  for (const path of ['/api/settings/telegram','/api/esim/purchase-quota','/api/esim/overview','/api/groups']) {
     assert.equal(customerEsimRoute('GET',path),false);
     assert.equal(customerEsimRoute('POST',path),false);
     if (path !== '/api/esim/overview') assert.equal(customerWorkbenchRoute('GET',path),false);
@@ -85,7 +85,6 @@ test('only an explicit customer API surface is allowed and a remote browser cann
   assert.ok(customerEsimRoute('POST','/api/esim/purchases'));
   assert.ok(customerWorkbenchRoute('GET','/api/esim/overview'));
   assert.ok(customerWorkbenchRoute('GET','/'));
-  assert.ok(customerWorkbenchRoute('GET','/__host/template-archive/enhance.js'));
   assert.ok(customerWorkbenchRoute('GET','/api/address-orders/ADDR-20261120-ABC12345'));
   assert.equal(customerWorkbenchRoute('GET','/api/address-orders/callback'),false);
   assert.equal(customerWorkbenchRoute('GET','/_next/static/../../api/warehouse.json'),false);

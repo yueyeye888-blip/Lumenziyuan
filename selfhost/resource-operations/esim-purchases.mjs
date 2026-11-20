@@ -436,7 +436,7 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
       const renewal = renewalPaths.has(url.pathname);
       if (quota) {
         check(isAdmin(user),403,'仅管理员可管理账户余额。');
-        return respond(410,{error:'请从员工与额度页面管理账户余额。',href:'/__host/accounts'});
+        return respond(410,{error:'请从合伙人与额度页面管理账户余额。',href:'/__host/accounts'});
       }
       if (url.pathname==='/api/esim/purchase-cards') {
         check(req.method==='GET',405,'请求方式不支持。');

@@ -58,6 +58,7 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
       '/__host/dashboard.css': 'dashboard.css',
       '/__host/market-table.js': 'market-table.js',
       '/__host/market-table.css': 'market-table.css',
+      '/__host/market-flags.css': 'market-flags.css',
     }[path];
     if (typeof asset === 'string') {
       if (req.method !== 'GET') return json(res, 405, { error: '请求方式不支持。' });
@@ -109,7 +110,7 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
       if (path === '/api/commerce/deposits' && req.method === 'GET')
         return json(res, 200, { orders: deposits.list(user.id) });
       if (path === '/api/commerce/deposits' && req.method === 'POST') {
-        if (!admin(user) && user.role !== 'customer') throw fault(403, '员工账户额度由管理员添加。');
+        if (!admin(user) && user.role !== 'customer') throw fault(403, '合伙人账户额度由管理员添加。');
         const { network, amount, requestId } = await fields();
         if (!uuid.test(requestId || '')) throw fault(400, '请重新打开充值表单。');
         return json(res, 201, { order: await deposits.create({ userId: user.id, network, amount, requestId }) });
@@ -166,7 +167,7 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
           if (f.action === 'credit' && (!account || account.enabled === false))
             throw fault(404, '请填写已注册的入账邮箱。');
           if (f.action==='credit' && account.role!=='customer' && !canManageAccounts(config,user))
-            throw fault(403,'员工额度请由超级管理员核对。');
+            throw fault(403,'合伙人额度请由超级管理员核对。');
           const resolution = deposits.resolve({
             network: f.network,
             txHash: f.txHash,

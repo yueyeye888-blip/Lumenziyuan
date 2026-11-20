@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, Eye, FileText, Search, X, ZoomIn, ZoomOut } from "lucide-react";
 import type { SupplierTemplate, SupplierTemplateCatalog } from "@/lib/addrs-catalog";
 import PersonalDetailsForm from "@/components/personal-details-form";
+import { AddressPrice, useAddressPrice } from "@/components/address-price";
 
 const previewUrl = (id: number) => `https://addrs.xyz/template-preview/${id}`;
 const detailUrl = (id: number) => `https://addrs.xyz/templates/Show/${id}`;
@@ -20,6 +21,9 @@ export default function SupplierTemplateLibrary({ selectionMode = false, initial
   initialTemplateId?: number | null;
   onChooseTemplate?: (id: number) => void;
 }) {
+  const [billed, setBilled] = useState(false);
+  useEffect(() => { setBilled(typeof window.lumenSubmitAddress === "function"); }, []);
+  const price = useAddressPrice(selectionMode && billed);
   const [catalog, setCatalog] = useState<SupplierTemplateCatalog | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -109,6 +113,7 @@ export default function SupplierTemplateLibrary({ selectionMode = false, initial
     <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
       <div><p className="text-xs font-semibold uppercase tracking-[.16em] text-[#6885bd]">Addrs.xyz · Official Catalog</p><h1 className="mt-2 text-2xl font-semibold">{selectionMode ? "地址证明生成器" : "全球地址证明模版库"}</h1><p className="mt-2 text-sm leading-6 text-slate-500">{selectionMode ? "从全球地址证明模版库中选择任意模版，查看原平台水印预览。" : "原站真实条目与官方水印预览，点击模版可放大，也可选入地址证明生成器。"}</p></div>
     </div>
+    {selectionMode && billed && <AddressPrice price={price} />}
     <div className="mb-6 flex flex-wrap items-center gap-x-7 gap-y-3 rounded-2xl border border-[#e2e7ef] bg-white px-5 py-4">
       <div><strong className="text-2xl text-[#1d3b72]">{catalog?.totalTemplates ?? "—"}</strong><span className="ml-2 text-xs text-slate-500">个原模板</span></div><div><strong className="text-2xl text-[#1d3b72]">{catalog?.totalCountries ?? "—"}</strong><span className="ml-2 text-xs text-slate-500">个国家 / 地区</span></div>
     </div>
@@ -120,7 +125,7 @@ export default function SupplierTemplateLibrary({ selectionMode = false, initial
         <div className="min-w-0 flex-1"><div className="mb-2 flex items-center gap-2 text-xs font-medium text-[#6885bd]">{chosen && <CheckCircle2 size={15} />}当前选择</div><h2 className="text-lg font-semibold text-[#243d64]">{chosen ? chosen.name : "请从下方选择一个模版"}</h2><p className="mt-2 text-xs leading-5 text-slate-500">{chosen ? `${chosen.title} · #${chosen.id}` : "全部条目来自原平台目录，保留原名称、编号与预览图。"}</p>{chosen && <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-500">{[chosen.country, chosen.category, `${chosen.pages} 页`, chosen.language].filter(Boolean).map((value, index) => <span key={index} className="rounded-lg bg-[#f3f6fb] px-2.5 py-1.5">{value}</span>)}</div>}<p className="mt-5 text-xs leading-5 text-slate-500">提交资料后，所选模版会随 Telegram 消息发送，并由 Windows 自动化在 addrs.xyz 中同步选择。</p></div>
       </div>
     </section>}
-    {selectionMode && <PersonalDetailsForm selectedTemplate={chosen ? { id: chosen.id, name: chosen.name } : null} />}
+    {selectionMode && <PersonalDetailsForm price={price} selectedTemplate={chosen ? { id: chosen.id, name: chosen.name } : null} />}
     <div ref={gridRef} className="scroll-mt-24">
       <div className="mb-4 flex flex-col gap-3 lg:flex-row">
         <label className="relative flex-1"><Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" /><input aria-label="搜索原模板" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索模板名称、编号、国家、机构或文件类型" className="h-11 w-full rounded-xl border border-[#e2e7ef] bg-white pl-10 pr-4 text-sm outline-none focus:border-[#87a3d9]" /></label>

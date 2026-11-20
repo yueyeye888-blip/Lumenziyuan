@@ -323,5 +323,5 @@ export function registrationPage(res, { status=200, email='', verify=false, erro
     <form class="aux" method="post" action="${base}/code">${hiddenEmail}<button class="link-button">重新发送验证码</button><a href="${base}">更换邮箱</a></form>`
     : `<form method="post" action="${base}/code" autocomplete="off">${emailInput(email)}<button class="primary">发送验证码</button></form>`;
   page(res,status,title,`<p class="lead">${intro}</p>${steps}${notice(error,message)}${form}
-    <footer>${reset?'<a href="/__host/login">返回登录</a>':'已有账号？ <a href="/__host/login">登录</a><p class="employee">员工账号由管理员统一创建。</p>'}</footer>`);
+    <footer>${reset?'<a href="/__host/login">返回登录</a>':'已有账号？ <a href="/__host/login">登录</a><p class="employee">合伙人账号由管理员统一创建。</p>'}</footer>`);
 }

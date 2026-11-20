@@ -54,15 +54,13 @@ function validSignature(extension, bytes) {
 
 export function enhanceArchiveHtml(html, user) {
   if (!user?.email || html.includes('data-lumen-archive-loader')) return html;
-  return html.replace('</body>', `<script defer data-lumen-archive-loader${user.role === 'customer' ? ' data-role="customer"' : ''} src="${BASE}/enhance.js"></script></body>`);
+  return html.replace('</body>', `<script defer data-lumen-archive-loader src="${BASE}/enhance.js"></script></body>`);
 }
 
 export async function handlePrivateTemplateArchive(req, res, { root, url, user, allowedOrigins, config = {}, archiveDownloads, purchases, readBody }) {
   if (url.pathname !== BASE && !url.pathname.startsWith(BASE + '/')) return false;
-  if (!user?.email) { json(res, 401, { error: '请先登录公司账号' }); return true; }
+  if (!user?.email) { json(res, 401, { error: '请先登录账号' }); return true; }
   const suffix = url.pathname.slice(BASE.length);
-  const readEnhancement = suffix === '/enhance.js' && ['GET', 'HEAD'].includes(req.method);
-  if (user.role === 'customer' && !readEnhancement) { json(res,403,{error:'该模版库仅供员工访问。'}); return true; }
   if (['GET','HEAD'].includes(req.method) && ['', '/', '/app.js', '/style.css', '/enhance.js'].includes(suffix)) {
     const asset = suffix === '/app.js' ? 'app.js' : suffix === '/enhance.js' ? 'enhance.js' : suffix === '/style.css' ? 'style.css' : 'index.html';
     const content = await readFile(path.join(root, 'template-library-ui', asset));
@@ -96,7 +94,7 @@ export async function handlePrivateTemplateArchive(req, res, { root, url, user, 
   if (!item) { json(res, 404, { error: '文件不存在' }); return true; }
   const authorize = Boolean(match[2]);
   if (req.method === 'PUT' && !authorize) {
-    if (!isOwner(user,config)) { json(res, 403, { error: '只有管理员可以上传或替换文件' }); return true; }
+    if (user.role === 'customer' || !isOwner(user,config)) { json(res, 403, { error: '只有管理员可以上传或替换文件' }); return true; }
     if (!allowedOrigins?.has(req.headers.origin) || req.headers['x-lumen-archive-upload'] !== '1') { json(res, 403, { error: '上传来源不匹配' }); return true; }
     if (locks.has(id)) { json(res, 409, { error: '该文件正在归档中' }); return true; }
     if (item.fileStatus === 'archived') { req.resume(); json(res, 200, { ok: true, alreadyArchived: true, sha256: item.sha256, bytes: item.bytes }); return true; }

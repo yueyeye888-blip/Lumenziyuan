@@ -1,13 +1,14 @@
 .lmt {
-  --lmt-ink: #162943;
+  --lmt-ink: #172840;
   --lmt-muted: #546781;
   --lmt-blue: #2457d6;
   --lmt-blue-dark: #1944ad;
   --lmt-line: #dce5f0;
+  --lmt-soft-border: #e7edf6;
   --lmt-panel: #f4f7fc;
   container: lmt / inline-size;
   display: grid;
-  gap: 16px;
+  gap: 13px;
   color: var(--lmt-ink);
   font: 400 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
 }
@@ -23,11 +24,24 @@
   min-width: 0;
   background: #fff;
   border: 1px solid var(--lmt-line);
-  border-radius: 15px;
-  box-shadow: 0 2px 7px rgb(21 42 74 / 3%);
+  border-radius: 14px;
+  box-shadow: 0 2px 6px rgb(21 42 74 / 4%);
 }
 
-.lmt-filter { display: grid; gap: 14px; padding: 18px 20px; }
+.lmt-filter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "head head" "fields actions" "extra extra";
+  gap: 9px 13px;
+  padding: 12px 16px 14px;
+}
+.lmt-filter:has(.lmt-extra:not([hidden])),
+.lmt-filter:has(.lmt-query-note:not([hidden])) { grid-template-areas: "head head" "fields fields" "extra extra" "actions actions"; }
+.lmt-filter-head { grid-area: head; }
+.lmt-filter-grid { grid-area: fields; }
+.lmt-extra { grid-area: extra; }
+.lmt-filter-footer { grid-area: actions; align-self: end; }
+
 .lmt-filter-head,
 .lmt-filter-head > div,
 .lmt-filter-footer,
@@ -44,8 +58,8 @@
 .lmt-filter h2,
 .lmt-results h2 {
   color: var(--lmt-ink);
-  font-size: 18px;
-  font-weight: 680;
+  font-size: 17px;
+  font-weight: 690;
   letter-spacing: -.015em;
 }
 .lmt-filter-count {
@@ -62,8 +76,9 @@
   display: grid;
   align-content: start;
   font-weight: 600;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
+  font-size: 13px;
   white-space: nowrap;
 }
 .lmt-extra { padding-block-start: 13px; border-block-start: 1px solid #e5ebf4; }
@@ -98,7 +113,8 @@
   cursor: pointer;
 }
 
-.lmt-filter-footer { justify-content: flex-end; gap: 8px; }
+.lmt-filter-footer { justify-content: flex-end; gap: 7px; }
+.lmt-filter-footer button { height: 38px; }
 .lmt-query-note {
   margin-inline-end: auto;
   color: var(--lmt-muted);
@@ -128,28 +144,35 @@
 .lmt .lmt-primary:disabled { color: #4f6485; background: #dee8f7; border-color: #dee8f7; }
 .lmt .lmt-secondary:disabled { color: #6d7f98; background: #f6f8fc; border-color: #e4eaf3; }
 
-.lmt-results-head { padding: 17px 20px 13px; align-items: end; }
-.lmt-result-count { margin-top: 4px; color: var(--lmt-muted); font-size: 13px; }
-.lmt-sort-mobile { display: none; max-width: 155px; font-size: 13px; }
+.lmt-results-toolbar {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 10px 15px;
+}
+.lmt-results-head { min-width: 0; }
+.lmt-results h2 { line-height: 1.25; overflow-wrap: anywhere; }
+.lmt-result-count { margin-top: 3px; color: var(--lmt-muted); font-size: 13px; }
+.lmt-sort-mobile { display: none; max-width: 150px; font-size: 13px; }
 .lmt-checkout {
-  margin: 0 20px 14px;
-  min-height: 58px;
-  padding: 10px 12px;
-  gap: 10px 21px;
+  min-height: 43px;
+  padding: 5px 7px 5px 10px;
+  gap: 6px 13px;
   color: #28456d;
-  background: #f0f5fd;
-  border: 1px solid #dce7f8;
+  background: #f6f8fd;
+  border: 1px solid #e5ebf6;
   border-radius: 9px;
 }
 .lmt-metric {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 2px 7px;
+  gap: 1px 6px;
   min-width: 0;
   white-space: nowrap;
 }
-.lmt-metric span { color: #4d6385; font-size: 13px; }
+.lmt-metric span { color: #4d6385; font-size: 12px; }
 .lmt-metric strong { color: var(--lmt-ink); font-weight: 680; font-variant-numeric: tabular-nums; }
 .lmt-checkout-actions { gap: 5px; margin-inline-start: auto; }
 .lmt-checkout-actions .lmt-text { padding-inline: 8px; }
@@ -163,10 +186,10 @@
 }
 .lmt-table-scroll:focus-visible { outline: 2px solid #4877e2; }
 .lmt table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; text-align: start; font-variant-numeric: tabular-nums; }
-.lmt table :is(th, td) { padding: 12px 9px; text-align: start; vertical-align: middle; }
+.lmt table :is(th, td) { padding: 9px 9px; text-align: start; vertical-align: middle; }
 .lmt thead th {
   color: #4b5e7a;
-  background: #f1f5fb;
+  background: #f3f6fc;
   font-weight: 650;
   font-size: 13px;
   white-space: nowrap;
@@ -182,7 +205,9 @@
 .lmt table :is(.lmt-price, .lmt-data, .lmt-duration, .lmt-unit, .lmt-actions) { white-space: nowrap; }
 
 .lmt table .lmt-place { width: 14%; min-width: 85px; }
-.lmt tbody :is(th, td) { border-bottom: 1px solid #e7edf5; }
+.lmt tbody :is(th, td) { border-bottom: 1px solid var(--lmt-soft-border); }
+.lmt tbody tr:nth-child(even) { background: #fcfdff; }
+.lmt tbody tr:has(input[data-select]:checked) { background: #eef4ff; }
 .lmt tbody tr:hover,
 .lmt tbody tr:focus-within { background: #f7faff; }
 .lmt tbody tr:last-child :is(th, td) { border-bottom: 0; }
@@ -216,24 +241,35 @@
 .lmt th[aria-sort="ascending"] .lmt-arrows::before { color: var(--lmt-blue-dark); }
 .lmt th[aria-sort="descending"] .lmt-arrows::after { color: var(--lmt-blue-dark); }
 
+.lmt-plan-identity {
+  display: grid;
+  grid-template-columns: 35px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+}
 .lmt-region-mark {
-  display: inline-grid;
-  float: inline-start;
+  display: grid;
   place-items: center;
-  position: relative;
-  isolation: isolate;
-  width: 30px;
-  height: 30px;
-  margin: 2px 8px 0 0;
-  color: #325482;
-  background: #eaf0fb;
-  border: 1px solid #dce6f6;
-  border-radius: 8px;
-  font-size: 10px;
-  font-weight: 740;
+  width: 35px;
+  height: 28px;
+  color: #3e628b;
+  background: #f3f6fc var(--lmt-flag, none) no-repeat center / contain;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px rgb(29 57 91 / 11%);
   overflow: hidden;
 }
-.lmt-region-mark img { display: block; width: 100%; height: 100%; object-fit: cover; position: absolute; inset: 0; }
+.lmt-region-globe {
+  display: var(--lmt-globe-display, block);
+  position: relative;
+  width: 17px;
+  height: 17px;
+  border: 1.4px solid currentColor;
+  border-radius: 50%;
+}
+.lmt-region-globe::before,
+.lmt-region-globe::after { content: ''; position: absolute; }
+.lmt-region-globe::before { inset: -1.4px 3px; border-inline: 1.2px solid currentColor; border-radius: 50%; }
+.lmt-region-globe::after { inset: 50% 0 auto; border-block-start: 1.2px solid currentColor; }
 .lmt-plan-info { display: grid; min-width: 0; overflow: hidden; }
 .lmt-product {
   display: block;
@@ -257,7 +293,7 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  margin-top: 3px;
+  margin-top: 2px;
   color: var(--lmt-muted);
   font-size: 12px;
 }
@@ -265,9 +301,10 @@
 .lmt-row-actions { gap: 5px; }
 .lmt .lmt-buy-one {
   padding-inline: 8px;
-  border: 1px solid #d8e5ff;
-  color: #204aa7;
-  background: #eff5ff;
+  min-height: 33px;
+  border: 1px solid #d6e2f8;
+  color: #214ab0;
+  background: #f4f7ff;
   font-size: 13px;
 }
 .lmt .lmt-buy-one:hover:not(:disabled) { background: #e1ebff; border-color: #aac3fb; }
@@ -317,6 +354,8 @@
 
 @container lmt (max-width: 860px) {
   .lmt :is(.lmt-unit, .lmt-place) { display: none; }
+  .lmt-filter { grid-template-areas: "head head" "fields fields" "extra extra" "actions actions"; }
+  .lmt-results-toolbar { grid-template-columns: 1fr; }
   .lmt-sort-mobile { display: grid; }
 }
 @container lmt (max-width: 675px) {
@@ -324,9 +363,9 @@
   .lmt-checkout { flex-wrap: wrap; gap: 8px 18px; }
 }
 @container lmt (max-width: 570px) {
-  .lmt-filter { padding: 14px 12px; }
-  .lmt-results-head { padding: 13px 12px; }
-  .lmt-checkout { margin: 0 12px 12px; gap: 8px 10px; }
+  .lmt-filter { padding: 13px 12px; }
+  .lmt-results-toolbar { padding: 10px 11px; }
+  .lmt-checkout { gap: 5px 10px; }
   .lmt-checkout-actions { flex-basis: 100%; justify-content: flex-end; }
   .lmt-table-scroll .lmt-data, .lmt-table-scroll .lmt-duration { display: none; }
   .lmt .lmt-mobile-meta { display: block; }
@@ -335,7 +374,10 @@
   .lmt table th, .lmt table td { padding-inline: 5px; }
   .lmt table .lmt-price { width: 70px; font-size: 13px; }
   .lmt table .lmt-actions { width: 77px; padding-inline-end: 7px; }
-  .lmt-region-mark { display: none; }
+  .lmt-plan-identity { grid-template-columns: 22px minmax(0, 1fr); gap: 6px; }
+  .lmt-region-mark { width: 22px; height: 18px; border-radius: 4px; }
+  .lmt-region-globe { transform: scale(.74); }
+  .lmt-metric span { font-size: 11px; }
   .lmt-product { white-space: normal; text-overflow: clip; overflow-wrap: anywhere; }
   .lmt-network { display: none !important; }
   .lmt-row-actions { gap: 1px; }

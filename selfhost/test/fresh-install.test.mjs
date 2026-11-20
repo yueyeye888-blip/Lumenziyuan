@@ -130,7 +130,7 @@ test('new server initializes and serves the complete release using only runtime 
     assert.equal((await buyer('/?section=wallet&action=recharge')).status,200);
     assert.equal((await buyer('/__host/shop?section=wallet&action=recharge')).headers.location,'/?section=wallet&action=recharge');
     assert.equal((await buyer('/__host/shop')).headers.location,'/');
-    for(const path of ['/__host/wallet','/__host/security','/__host/commerce.js','/__host/commerce.css','/favicon.svg','/mail-delivery','/api/supplier-templates','/__host/template-archive/enhance.js']) {
+    for(const path of ['/__host/wallet','/__host/security','/__host/commerce.js','/__host/commerce.css','/favicon.svg','/mail-delivery','/api/supplier-templates','/__host/template-archive','/__host/template-archive/app.js','/__host/template-archive/enhance.js']) {
       assert.equal((await buyer(path)).status,200,path);
     }
     const viewer=JSON.parse((await buyer('/api/session')).body).viewer;
@@ -158,10 +158,15 @@ test('new server initializes and serves the complete release using only runtime 
     assert.equal((await discount(session,customerEmail,10001)).status,400);
     assert.equal((await discount(session,customerEmail,8000)).status,200);
     assert.equal(JSON.parse((await buyer('/api/commerce/address/price')).body).priceRaw,80000);
-    assert.equal((await buyer('/__host/template-archive/catalog')).status,403);
+    const archiveCatalog=await buyer('/__host/template-archive/catalog');
+    assert.equal(archiveCatalog.status,200);
+    assert.deepEqual(JSON.parse(archiveCatalog.body).items,[]);
+    assert.equal(JSON.parse(archiveCatalog.body).priceRaw,40000);
     assert.equal((await discount(session,customerEmail,null)).status,200);
     assert.equal(JSON.parse((await buyer('/api/commerce/address/price')).body).priceRaw,100000);
-    for(const path of ['/api/operations/accounts','/api/groups','/__host/template-archive/catalog','/__host/accounts','/api/warehouse','/__host/template-archive/app.js','/api/esim/topups','/api/settings/telegram','/api/commerce/admin/deposits'])
+    assert.equal(JSON.parse((await buyer('/__host/template-archive/catalog')).body).priceRaw,50000);
+    assert.equal((await call(port,'/__host/template-archive')).headers.location,'/__host/login?returnTo=%2F__host%2Ftemplate-archive');
+    for(const path of ['/api/operations/accounts','/api/groups','/__host/accounts','/api/warehouse','/api/esim/topups','/api/settings/telegram','/api/commerce/admin/deposits'])
       assert.equal((await buyer(path)).status,403,path);
     const adminWallet=JSON.parse((await get('/api/commerce/wallet')).body);
     assert.equal(adminWallet.canManageAccounts,true);

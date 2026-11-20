@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f4f7fb" />
-    <title>员工与额度 · Lumen</title>
+    <title>合伙人与额度 · Lumen</title>
     <link rel="stylesheet" href="/__host/accounts.css" />
     <script src="/__host/resource-operations.js" defer></script>
   </head>
@@ -20,7 +20,7 @@
           <a href="/">首页</a>
           <a href="/__host/shop">资源市场</a>
           <a href="/__host/wallet">钱包 / 充值</a>
-          <a aria-current="page" href="/__host/accounts">员工与额度</a>
+          <a aria-current="page" href="/__host/accounts">合伙人与额度</a>
         </nav>
         <details class="profile-menu">
           <summary>账户</summary>
@@ -35,16 +35,16 @@
     <main class="layout" id="main">
       <div class="page-header">
         <div>
-          <h1>员工与额度</h1>
-          <p>创建员工、增加账户额度，并为代理设置采购折扣。</p>
+          <h1>合伙人与额度</h1>
+          <p>创建合伙人、增加账户额度，并为代理设置采购折扣。</p>
         </div>
         <button type="button" class="button primary" id="new-employee">
-          <span class="plus" aria-hidden="true"></span>创建员工
+          <span class="plus" aria-hidden="true"></span>创建合伙人
         </button>
       </div>
       <div class="summary" aria-label="账号概览">
         <div class="metric">
-          <span class="metric-label">员工账号</span>
+          <span class="metric-label">合伙人账号</span>
           <strong id="employee-count">—</strong>
         </div>
         <div class="metric">
@@ -56,7 +56,7 @@
           <strong id="agent-count">—</strong>
         </div>
         <div class="metric">
-          <span class="metric-label">员工可用余额合计</span>
+          <span class="metric-label">合伙人可用余额合计</span>
           <div><strong id="employee-balance">—</strong><span class="unit">U</span></div>
         </div>
       </div>
@@ -68,7 +68,7 @@
         </div>
         <div class="account-controls">
           <div class="filter" aria-label="账号类型">
-            <button type="button" data-role="employee" aria-pressed="true">员工</button>
+            <button type="button" data-role="employee" aria-pressed="true">合伙人</button>
             <button type="button" data-role="customer" aria-pressed="false">平台用户</button>
             <button type="button" data-role="agent" aria-pressed="false">代理</button>
             <button type="button" data-role="all" aria-pressed="false">全部账号</button>
@@ -94,13 +94,13 @@
       <dialog id="employee-dialog" aria-labelledby="employee-title" aria-describedby="employee-description">
         <div class="dialog-head">
           <div>
-            <h2 id="employee-title">创建员工</h2>
-            <p id="employee-description">员工使用你填写的邮箱和初始密码登录。</p>
+            <h2 id="employee-title">创建合伙人</h2>
+            <p id="employee-description">合伙人使用你填写的邮箱和初始密码登录。</p>
           </div>
           <button type="button" class="close" data-close="employee-dialog" aria-label="关闭">×</button>
         </div>
         <form id="create-employee" autocomplete="off">
-          <label for="employee-name">员工姓名</label>
+          <label for="employee-name">合伙人姓名</label>
           <input id="employee-name" name="name" maxlength="80" required />
           <label for="employee-email">登录邮箱</label>
           <input id="employee-email" name="email" type="email" inputmode="email" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="254" required />
@@ -111,7 +111,7 @@
           <p class="modal-feedback" role="alert" hidden></p>
           <div class="dialog-actions">
             <button type="button" class="button neutral" data-close="employee-dialog">取消</button>
-            <button class="button primary" type="submit">创建员工账号</button>
+            <button class="button primary" type="submit">创建合伙人账号</button>
           </div>
         </form>
       </dialog>

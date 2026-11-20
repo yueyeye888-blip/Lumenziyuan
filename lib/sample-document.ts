@@ -1,6 +1,6 @@
 export const SAMPLE_TEMPLATES = [
   { name: "地址信息测试卡", subtitle: "地址字段与地区展示", code: "ADDRESS", color: "#315c9f", background: "#edf3fc", layout: "address" },
-  { name: "员工资料测试卡", subtitle: "员工资料与培训演示", code: "PROFILE", color: "#28765c", background: "#eaf7f0", layout: "profile" },
+  { name: "合伙人资料测试卡", subtitle: "合伙人资料与培训演示", code: "PROFILE", color: "#28765c", background: "#eaf7f0", layout: "profile" },
   { name: "系统验收测试卡", subtitle: "系统流程与交付验收", code: "REVIEW", color: "#7754a1", background: "#f3edfa", layout: "review" },
   { name: "数据迁移测试卡", subtitle: "字段映射与迁移核对", code: "DATA", color: "#996332", background: "#fcf3e8", layout: "data" },
 ] as const;

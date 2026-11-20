@@ -161,3 +161,151 @@ main[data-lumen-wallet-view] > header > :has(> input) { visibility: hidden; }
   .lumen-wallet-summary-actions { grid-column: 1 / -1; }
   .lumen-wallet-summary-actions a { flex: 1; }
 }
+
+.lumen-market-directory,
+.lumen-market-category-header {
+  margin: 0 auto;
+  max-width: 1480px;
+  padding: 32px;
+}
+.lumen-market-directory h1,
+.lumen-market-category-header h1 {
+  color: #142441;
+  font-size: clamp(24px, 2.6vw, 34px);
+  font-weight: 720;
+  line-height: 1.2;
+}
+.lumen-market-directory > header p {
+  color: #53647e;
+  font-size: 15px;
+  margin-top: 8px;
+}
+.lumen-market-categories {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
+  gap: 16px;
+  margin-top: 23px;
+}
+.lumen-market-category {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  text-align: left;
+  align-content: center;
+  gap: 4px 14px;
+  min-height: 110px;
+  padding: 19px;
+  background: #fff;
+  border: 1px solid #dce6f4;
+  border-radius: 17px;
+  box-shadow: 0 3px 12px rgb(27 54 100 / 4%);
+  cursor: pointer;
+}
+.lumen-market-category:hover {
+  border-color: #6b8cef;
+  background: #f9fbff;
+}
+.lumen-market-category:focus-visible,
+.lumen-market-category-header button:focus-visible {
+  outline: 2px solid #2457e6;
+  outline-offset: 3px;
+}
+.lumen-market-category strong {
+  color: #162c56;
+  font-size: 17px;
+  line-height: 1.35;
+}
+.lumen-market-category > :last-child {
+  color: #53647e;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.lumen-category-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  grid-row: 1 / 3;
+  align-self: center;
+  height: 48px;
+  width: 48px;
+  border-radius: 13px;
+  background: #eaf1ff;
+  color: #2354d7;
+}
+.lumen-category-icon::before,
+.lumen-category-icon::after {
+  content: '';
+  display: block;
+}
+.lumen-category-icon::before {
+  border: 1.8px solid currentColor;
+  border-radius: 3px;
+  width: 19px;
+  height: 22px;
+}
+.lumen-category-icon::after { position: absolute; }
+.lumen-category-esim::after { border: 1.5px solid currentColor; border-radius: 2px; width: 9px; height: 9px; }
+.lumen-category-phone { background: #e8f6f2; color: #0a785e; }
+.lumen-category-phone::before { width: 15px; height: 24px; border-radius: 4px; }
+.lumen-category-phone::after { bottom: 15px; width: 5px; border-bottom: 1.8px solid currentColor; }
+.lumen-category-mail { background: #f2edff; color: #6640b0; }
+.lumen-category-mail::before { width: 23px; height: 16px; }
+.lumen-category-mail::after { width: 9px; height: 9px; border-right: 1.7px solid currentColor; border-bottom: 1.7px solid currentColor; transform: rotate(45deg); margin-top: -5px; }
+
+.lumen-market-category-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding-block: 24px 5px;
+}
+.lumen-market-category-header button {
+  background: #fff;
+  border: 1px solid #dce5f2;
+  border-radius: 9px;
+  color: #27477f;
+  font-size: 14px;
+  font-weight: 650;
+  min-height: 37px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.lumen-address-price {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 15px;
+  align-items: center;
+  color: #162c56;
+  background: #eef3ff;
+  border: 1px solid #ccdcfd;
+  border-left: 4px solid #2457e6;
+  border-radius: 12px;
+  padding: 14px 17px;
+  margin-bottom: 21px;
+}
+.lumen-address-price h3 { font-size: 15px; font-weight: 690; }
+.lumen-address-price p { margin-top: 4px; font-size: 13px; color: #495f82; }
+.lumen-address-price-amount {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0 5px;
+  color: #1f48bb;
+}
+.lumen-address-price-amount strong {
+  line-height: 1;
+  font-size: clamp(29px, 4vw, 39px);
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+}
+.lumen-address-price-amount span { font-size: 13px; font-weight: 650; }
+.lumen-address-price-amount small,
+.lumen-address-price-amount .lumen-address-standard-label { flex-basis: 100%; text-align: right; color: #53688f; font-size: 12px; }
+
+@media (max-width: 767px) {
+  .lumen-market-directory, .lumen-market-category-header { padding-inline: 17px; }
+  .lumen-market-category { min-height: 88px; padding: 14px; }
+  .lumen-address-price { padding: 13px; gap: 10px; }
+}

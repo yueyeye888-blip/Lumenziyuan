@@ -136,11 +136,9 @@ const customerWorkbenchGet = new Set([
   '/', '/favicon.svg', '/mail-delivery', '/api/session', '/api/esim/overview',
   '/api/mail-deliveries', '/api/supplier-templates', '/api/addresses/normalize',
   '/__host/esim-checkout.js', '/__host/esim-checkout.css', '/__host/resource-operations.js',
-  '/__host/template-archive/enhance.js',
 ]);
 export function customerWorkbenchRoute(method, pathname) {
   if (method === 'POST') return pathname === '/api/esim/export' || pathname === '/api/resources/status';
-  if (method === 'HEAD') return pathname === '/__host/template-archive/enhance.js';
   if (method !== 'GET') return false;
   return customerWorkbenchGet.has(pathname)
     || /^\/(?:api\/)?address-orders\/ADDR-[0-9]{8}-[A-Z0-9]{8}$/.test(pathname)
