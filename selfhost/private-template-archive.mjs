@@ -54,14 +54,15 @@ function validSignature(extension, bytes) {
 
 export function enhanceArchiveHtml(html, user) {
   if (!user?.email || html.includes('data-lumen-archive-loader')) return html;
-  return html.replace('</body>', `<script defer data-lumen-archive-loader src="${BASE}/enhance.js"></script></body>`);
+  return html.replace('</body>', `<script defer data-lumen-archive-loader${user.role === 'customer' ? ' data-role="customer"' : ''} src="${BASE}/enhance.js"></script></body>`);
 }
 
 export async function handlePrivateTemplateArchive(req, res, { root, url, user, allowedOrigins, config = {}, archiveDownloads, purchases, readBody }) {
   if (url.pathname !== BASE && !url.pathname.startsWith(BASE + '/')) return false;
   if (!user?.email) { json(res, 401, { error: '请先登录公司账号' }); return true; }
-  if (user.role==='customer') { json(res,403,{error:'该模版库仅供员工访问。'}); return true; }
   const suffix = url.pathname.slice(BASE.length);
+  const readEnhancement = suffix === '/enhance.js' && ['GET', 'HEAD'].includes(req.method);
+  if (user.role === 'customer' && !readEnhancement) { json(res,403,{error:'该模版库仅供员工访问。'}); return true; }
   if (['GET','HEAD'].includes(req.method) && ['', '/', '/app.js', '/style.css', '/enhance.js'].includes(suffix)) {
     const asset = suffix === '/app.js' ? 'app.js' : suffix === '/enhance.js' ? 'enhance.js' : suffix === '/style.css' ? 'style.css' : 'index.html';
     const content = await readFile(path.join(root, 'template-library-ui', asset));

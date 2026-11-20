@@ -160,7 +160,10 @@
     for (const button of document.querySelectorAll('[data-role]')) button.onclick = () => selectTab(button.dataset.role);
     search.oninput = render;
     discountMode.onchange = syncDiscountFields;
-    toolbar.onclick = () => show(select('employee-dialog'));
+    toolbar.onclick = () => {
+      form.reset();
+      show(select('employee-dialog'));
+    };
     document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => select(button.dataset.close).close());
 
     function onSubmit(formEl, pending, action) {
@@ -274,6 +277,7 @@
     dialog.style.cssText = 'width:min(440px,calc(100vw - 32px));max-height:90vh;overflow:auto;margin:auto;padding:24px;border:1px solid #dbe4f0;border-radius:18px;background:white;color:#243d64;box-shadow:0 0 0 100vmax #0c204a75,0 20px 60px #1d3b722e';
     dialog.setAttribute('aria-labelledby','lumen-email-title');
     const emailForm = document.createElement('form');
+    emailForm.autocomplete = 'off';
     const title = element('h2','发送邮箱');
     title.id = 'lumen-email-title';
     title.style.cssText = 'margin:0;font-size:20px;font-weight:650';
@@ -283,7 +287,7 @@
     const label = element('label','收件邮箱');
     label.style.cssText = 'display:block;margin-top:18px;font-size:13px;font-weight:600';
     const recipient = document.createElement('input');
-    recipient.type = 'email'; recipient.required = true; recipient.maxLength = 254; recipient.autocomplete = 'email';
+    recipient.type = 'email'; recipient.required = true; recipient.maxLength = 254; recipient.autocomplete = 'off';
     recipient.placeholder = '请输入收件邮箱';
     recipient.style.cssText = 'display:block;width:100%;min-height:42px;margin-top:7px;padding:9px 12px;border:1px solid #cbd9eb;border-radius:9px;background:white;color:#243d64;font-size:14px';
     label.append(recipient);
@@ -336,7 +340,13 @@
           const info = element('p',''); info.role = 'status'; info.style.cssText = 'font-size:12px;color:#5a7093';
           button.addEventListener('click',() => void exportSelection(button,info));
           const email = element('button','发送邮箱'); email.type = 'button'; email.style.cssText = primaryStyle;
-          email.addEventListener('click',() => openEmailDialog(info));
+          if (heading.closest('[data-customer-workbench]')) {
+            email.disabled = true;
+            email.textContent = '发送邮箱（员工权限）';
+            email.style.cssText = buttonStyle + ';cursor:default;opacity:.7';
+          } else {
+            email.addEventListener('click',() => openEmailDialog(info));
+          }
           const actions = document.createElement('div'); actions.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:12px';
           actions.append(button,email,info); heading.parentElement.append(actions);
           processed.add(heading); break;

@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openIdentityStore } from '../resource-operations/session-store.mjs';
-import { clientAddress, customerEsimRoute } from '../registration.mjs';
+import { clientAddress, customerEsimRoute, customerWorkbenchRoute } from '../registration.mjs';
 import { encryptMailToken, createOutlookMail } from '../outlook-mail.mjs';
 import { passwordRecord, verifyPassword } from '../auth.mjs';
 
@@ -78,9 +78,18 @@ test('only an explicit customer API surface is allowed and a remote browser cann
   for (const path of ['/api/settings/telegram','/__host/template-archive/catalog','/api/esim/purchase-quota','/api/esim/overview','/api/groups']) {
     assert.equal(customerEsimRoute('GET',path),false);
     assert.equal(customerEsimRoute('POST',path),false);
+    if (path !== '/api/esim/overview') assert.equal(customerWorkbenchRoute('GET',path),false);
+    assert.equal(customerWorkbenchRoute('POST',path),false);
   }
   assert.ok(customerEsimRoute('GET','/api/esim/packages'));
   assert.ok(customerEsimRoute('POST','/api/esim/purchases'));
+  assert.ok(customerWorkbenchRoute('GET','/api/esim/overview'));
+  assert.ok(customerWorkbenchRoute('GET','/'));
+  assert.ok(customerWorkbenchRoute('GET','/__host/template-archive/enhance.js'));
+  assert.ok(customerWorkbenchRoute('GET','/api/address-orders/ADDR-20261120-ABC12345'));
+  assert.equal(customerWorkbenchRoute('GET','/api/address-orders/callback'),false);
+  assert.equal(customerWorkbenchRoute('GET','/_next/static/../../api/warehouse.json'),false);
+  assert.equal(customerWorkbenchRoute('POST','/api/addresses/normalize'),false);
   assert.equal(clientAddress({socket:{remoteAddress:'192.0.2.13'},headers:{'x-forwarded-for':'192.0.2.99'}}),'192.0.2.13');
   assert.equal(clientAddress({socket:{remoteAddress:'127.0.0.1'},headers:{'x-forwarded-for':'192.0.2.99, 192.0.2.13'}}),'192.0.2.13');
 });

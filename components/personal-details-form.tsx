@@ -22,6 +22,7 @@ export default function PersonalDetailsForm({ selectedTemplate }: { selectedTemp
   const [sourceAddress, setSourceAddress] = useState("");
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [configurationError, setConfigurationError] = useState("");
+  const [translationRestricted, setTranslationRestricted] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [translation, setTranslation] = useState<AddressTranslation | null>(null);
   const [translationSource, setTranslationSource] = useState("");
@@ -35,9 +36,12 @@ export default function PersonalDetailsForm({ selectedTemplate }: { selectedTemp
   useEffect(() => {
     let active = true;
     fetch("/api/addresses/normalize", { cache: "no-store" }).then(async (response) => {
-      const data = await response.json() as { configured?: boolean; error?: string };
+      const data = await response.json() as { configured?: boolean; restricted?: boolean; error?: string };
       if (!response.ok) throw new Error(data.error || "翻译服务状态读取失败");
-      if (active) setConfigured(Boolean(data.configured));
+      if (active) {
+        setConfigured(Boolean(data.configured));
+        setTranslationRestricted(Boolean(data.restricted));
+      }
     }).catch(() => { if (active) setConfigurationError("暂时无法读取翻译服务状态，请稍后刷新；仍可手动填写地址。"); });
     return () => { active = false; requestRef.current?.abort(); };
   }, []);
@@ -130,7 +134,7 @@ export default function PersonalDetailsForm({ selectedTemplate }: { selectedTemp
         <h3 className="text-sm font-semibold text-[#315c9f]">翻译并规范已有地址</h3><p className="mt-2 text-xs leading-6 text-slate-500">粘贴你自己的中文或本地语言地址。AI 只翻译、去重并整理为三行英文，不会补造缺失的门牌、地区或邮编。</p>
         <label className="mt-4 block"><span className="mb-2 block text-xs font-medium text-slate-600">地址原文</span><textarea rows={4} maxLength={SOURCE_ADDRESS_LIMIT} value={sourceAddress} onChange={(event) => changeSource(event.target.value)} placeholder="粘贴你已有的真实地址；缺失的信息不必填写" className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm leading-6 outline-none focus:border-[#87a3d9]" /></label>
         <div className="mt-2 flex items-center justify-between gap-3 text-[10px] text-slate-400"><span>仅发送地址原文至 OpenAI，姓名和邮箱不参与翻译。</span><span className="shrink-0">{sourceAddress.length} / {SOURCE_ADDRESS_LIMIT}</span></div>
-        {configured === false && <p role="status" className="mt-3 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800">AI 翻译尚未启用，请管理员完成 OpenAI 服务配置。你仍可手动填写三行英文地址。</p>}
+        {configured === false && <p role="status" className="mt-3 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800">{translationRestricted ? "AI 地址翻译仅向员工开放。你可以手动填写三行英文地址。" : "AI 翻译尚未启用，请管理员完成 OpenAI 服务配置。你仍可手动填写三行英文地址。"}</p>}
         {configurationError && <p className="mt-3 text-xs text-amber-700">{configurationError}</p>}
         <div className="mt-4 flex items-center gap-3"><button type="button" disabled={!configured || translating || sourceAddress.trim().length < 3} onClick={() => void translate()} className="inline-flex items-center gap-2 rounded-xl bg-[#1d3b72] px-4 py-2.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-40">{translating ? <Loader2 size={14} className="animate-spin" /> : <Languages size={14} />}{translating ? "正在翻译并整理" : "翻译并整理为三行英文"}</button>{translating && <button type="button" onClick={() => { requestRef.current?.abort(); requestRef.current = null; setTranslating(false); }} className="inline-flex items-center gap-1 text-xs text-slate-500"><X size={13} />取消</button>}</div>
         {translationError && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-xs leading-5 text-red-700">{translationError}</p>}

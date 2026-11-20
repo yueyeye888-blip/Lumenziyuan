@@ -1,4 +1,4 @@
-import { canManageAccounts } from './account-access.mjs';
+import { canManageAccounts, viewerFor } from './account-access.mjs';
 import { esimPrice, validDiscount } from '../commerce/pricing.mjs';
 import { readFileSync } from 'node:fs';
 import { webcrypto } from 'node:crypto';
@@ -22,6 +22,43 @@ function decorate(item) {
     expiryKind: item.activateTime || !['GOT_RESOURCE', 'UNUSED_EXPIRED'].includes(item.esimStatus) ? 'plan' : 'activation',
   };
 }
+function customerHistoryItem({profile,override}) {
+  const plan = profile.packageList?.[0];
+  return decorate({
+    availabilityStatus: override.status || 'normal',
+    availabilityNote: override.note || null,
+    availabilityRecheckAt: override.recheck_at || null,
+    orderNo: profile.orderNo,
+    transactionId: profile.transactionId || null,
+    esimTranNo: profile.esimTranNo,
+    iccid: profile.iccid || null,
+    imsi: profile.imsi || null,
+    msisdn: profile.msisdn || null,
+    activationCode: profile.ac || null,
+    qrCodeUrl: typeof profile.qrCodeUrl === 'string' && /^https:\/\//i.test(profile.qrCodeUrl) ? profile.qrCodeUrl : null,
+    shortUrl: typeof profile.shortUrl === 'string' && /^https:\/\//i.test(profile.shortUrl) ? profile.shortUrl : null,
+    eid: profile.eid || null,
+    smsStatus: profile.smsStatus ?? null,
+    activeType: profile.activeType ?? null,
+    dataType: profile.dataType ?? null,
+    activateTime: profile.activateTime || null,
+    esimStatus: profile.esimStatus,
+    smdpStatus: profile.smdpStatus,
+    totalVolume: profile.totalVolume || 0,
+    orderUsage: profile.orderUsage || 0,
+    expiredTime: profile.expiredTime || null,
+    totalDuration: profile.totalDuration || plan?.duration || null,
+    durationUnit: profile.durationUnit || 'DAY',
+    pin: profile.pin || null,
+    puk: profile.puk || null,
+    apn: profile.apn || null,
+    packageName: plan?.packageName || 'eSIM 套餐',
+    packageCode: plan?.packageCode || null,
+    locationCode: plan?.locationCode || null,
+    createTime: plan?.createTime || null,
+  });
+}
+
 const statusForMail = {
   delivered: { code:'delivered', tone:'success', label:'已确认交付', detail:'该地址订单已收到交付完成回执。' },
   failed: { code:'failed', tone:'error', label:'订单处理失败', detail:'该订单没有邮件交付回执。' },
@@ -40,9 +77,19 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
   const mailLog = openEsimMailLog(root);
 
   async function overview(user) {
+    const viewer = viewerFor(config,user);
+    if (user.role === 'customer') {
+      const {items,partial,available} = await purchases.customerProfiles(user);
+      return {status:available ? 200 : 502,data:{
+        connected:available, viewer, platform:'eSIMAccess',
+        history:{total:items.length,items:items.map(customerHistoryItem)},
+        ...(partial ? {error:'部分已购资源暂时无法同步，请稍后刷新。'} : {}),
+        ...(available ? {syncedAt:new Date().toISOString()} : {}),
+      }};
+    }
     const reply = await dispatch('/api/esim/overview', user);
     const data = await reply.json();
-    if (data.viewer) data.viewer.canManageAccounts = canManageAccounts(config,user);
+    if (data.viewer) data.viewer = viewer;
     if (data.history?.items) data.history.items = data.history.items.map(decorate);
     return { status: reply.status, data };
   }

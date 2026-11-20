@@ -235,7 +235,6 @@ document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => $(b.
 async function loadWallet() {
   wallet = await api('/api/commerce/wallet');
   $('account').textContent = wallet.email;
-  $('workspace').hidden = wallet.role === 'customer';
   $('staff-admin-link').hidden = !wallet.canManageAccounts;
   $('review-link').hidden = wallet.role !== 'admin';
   const rechargeAllowed = wallet.role !== 'employee';
@@ -698,7 +697,7 @@ async function digest(t) {
     $(view).hidden = false;
     const walletLink = document.querySelector('.wallet-link');
     walletLink.href = walletPage;
-    const activeNav = view === 'wallet' ? walletLink : document.querySelector(`header a[href="/__host/${view}"]`);
+    const activeNav = view === 'wallet' ? walletLink : view === 'shop' ? $('resource-home') : document.querySelector(`header a[href="/__host/${view}"]`);
     activeNav?.setAttribute('aria-current', 'page');
     await loadWallet();
     if (view === 'shop') await Promise.all([catalog(), loadOrders()]);

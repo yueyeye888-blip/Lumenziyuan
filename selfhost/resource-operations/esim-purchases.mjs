@@ -369,6 +369,56 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
     }))};
   }
 
+  const customerLookups = new Map();
+  async function fetchCustomerProfiles(user) {
+    const db = await dbReady();
+    const {results} = await db.prepare(`SELECT o.resource_id,o.order_no,s.status,s.note,s.recheck_at
+      FROM resource_ownership o LEFT JOIN resource_status_overrides s
+      ON s.id=o.supplier||':'||o.resource_id
+      WHERE o.owner_user_id=? AND o.supplier=? ORDER BY o.created_at DESC`)
+      .bind(user.id,supplierName).all();
+    const byOrder = new Map();
+    const lookups = [];
+    for (const row of results) {
+      if (!validId.test(row.resource_id)) continue;
+      if (!row.order_no || !validId.test(row.order_no)) {
+        lookups.push(async () => {
+          const profile = await supplier.profile(row.resource_id);
+          return profile?.esimTranNo === row.resource_id ? [{profile,override:row}] : [];
+        });
+        continue;
+      }
+      if (!byOrder.has(row.order_no)) byOrder.set(row.order_no,new Map());
+      byOrder.get(row.order_no).set(row.resource_id,row);
+    }
+    for (const [number, owned] of byOrder) {
+      lookups.push(async () => {
+        const profiles = await supplier.profiles(number);
+        return profiles.flatMap(profile => profile.orderNo === number && owned.has(profile.esimTranNo)
+          ? [{profile,override:owned.get(profile.esimTranNo)}] : []);
+      });
+    }
+    const matches = new Map();
+    let failures = 0;
+    for (let start=0; start<lookups.length; start+=3) {
+      const batch = await Promise.allSettled(lookups.slice(start,start+3).map(lookup => lookup()));
+      for (const response of batch) {
+        if (response.status === 'rejected') failures++;
+        else for (const matched of response.value) matches.set(matched.profile.esimTranNo,matched);
+      }
+      if (start+3<lookups.length) await new Promise(resolve=>setTimeout(resolve,500));
+    }
+    const items = results.map(row=>matches.get(row.resource_id)).filter(Boolean);
+    return {items, partial: items.length < results.length, available: !lookups.length || failures < lookups.length};
+  }
+
+  function customerProfiles(user) {
+    if (!customerLookups.has(user.id)) {
+      customerLookups.set(user.id,fetchCustomerProfiles(user).finally(()=>customerLookups.delete(user.id)));
+    }
+    return customerLookups.get(user.id);
+  }
+
   const renewals = createEsimRenewals({ supplier,dbReady,serialize,isAdmin,availability,wallet,check,readSecurity,verifyPaymentPin,
     validPin,definiteFailures,supplierName, usesSupplier, priceFor, quoteBalance, refreshBalance, invalidateBalance });
   const renewalPaths = new Set(['/api/esim/renewal-quote','/api/esim/renewals']);
@@ -458,5 +508,5 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
     return serialize(async () => verifyPaymentPin(db,user,pin,await readSecurity(db,user)));
   }
   const settle = async () => settlePendingPayments(await dbReady(),wallet);
-  return { route, summary, sync, reconcile, verifyPin, settle, usesSupplier, supplierBalance, ready:dbReady };
+  return { route, summary, sync, reconcile, verifyPin, settle, usesSupplier, supplierBalance, customerProfiles, ready:dbReady };
 }

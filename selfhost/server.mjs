@@ -16,7 +16,8 @@ import { worker } from './runtime.mjs';
 import { createOutlookMail } from './outlook-mail.mjs';
 import { trustedHeaders, verifyPassword, safeReturn } from './auth.mjs';
 import { login, registrationPage } from './public-auth.mjs';
-import { clientAddress, customerEsimRoute, reservedPublicEmail } from './registration.mjs';
+import { clientAddress, customerEsimRoute, customerWorkbenchRoute, reservedPublicEmail } from './registration.mjs';
+import { viewerFor } from './resource-operations/account-access.mjs';
 import { callbackAuthorized } from './site-order-queue.mjs';
 import { handlePrivateTemplateArchive, enhanceArchiveHtml } from './private-template-archive.mjs';
 
@@ -49,11 +50,23 @@ async function reconcileCommerce() {
 void reconcileCommerce();
 const commerceTimer=setInterval(reconcileCommerce,30_000);
 const operations = makeResourceOperations({ root, config, mf, identities, readBody: body, outlook, purchases, wallet });
-const returnPath = value => ['/__host/accounts','/__host/wallet','/__host/shop','/__host/security','/__host/payment-review'].includes(value) ? value : safeReturn(value);
-function customerHome(url) {
-  const params = url.searchParams;
-  if (params.get('section') !== 'wallet') return '/__host/shop';
-  return '/__host/shop?section=wallet' + (params.get('action') === 'recharge' ? '&action=recharge' : '');
+function returnPath(value) {
+  const clean = safeReturn(value);
+  const permitted = /^\/__host\/(?:accounts|wallet|shop|security|payment-review)(?:\?|$)/;
+  if (clean === '/' && typeof value === 'string' && permitted.test(value) && !/[\\\r\n]/.test(value)) {
+    return value;
+  }
+  return clean;
+}
+function customerDestination(url) {
+  if (url.pathname === '/__host/shop') {
+    const params = url.searchParams;
+    if (params.get('section') !== 'wallet') return '/';
+    return '/?section=wallet' + (params.get('action') === 'recharge' ? '&action=recharge' : '');
+  }
+  const pages = new Set(['/','/__host/wallet','/__host/security','/mail-delivery']);
+  const orderPage = url.pathname.startsWith('/address-orders/') && customerWorkbenchRoute('GET',url.pathname);
+  return pages.has(url.pathname) || orderPage ? url.pathname + url.search : '/';
 }
 const cookie = '__Host-lumen_session';
 const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
@@ -72,7 +85,7 @@ const server = https.createServer(tls, async (req, res) => {
     const url = new URL(req.url, origin);
     const allowedOrigins = new Set([origin, ...(config.aliasOrigins || [])]);
     if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin && !allowedOrigins.has(req.headers.origin)) return json(res, 403, { error: '请求来源不匹配' });
-    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '1.3.0' });
+    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '1.4.0' });
     // Machine callbacks use the existing order secret, never a browser session.
     if (url.pathname === '/api/address-orders/callback') {
       if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
@@ -104,7 +117,7 @@ const server = https.createServer(tls, async (req, res) => {
       const verify = reset ? auth.resetPassword : auth.register;
       const result = verify({ email, code: fields.get('code'), password: fields.get('password') });
       if (result.reset) return redirect(res, '/__host/login?reset=complete', { 'set-cookie': identities.cookie('') });
-      if (result.account) return redirect(res, '/__host/shop', { 'set-cookie': identities.issue(result.account) });
+      if (result.account) return redirect(res, '/', { 'set-cookie': identities.issue(result.account) });
       return registrationPage(res, { ...result, email, reset, verify: true });
     }
     if (url.pathname === '/__host/login') {
@@ -121,7 +134,7 @@ const server = https.createServer(tls, async (req, res) => {
       }
       attempts.delete(address);
       const destination = returnPath(fields.get('returnTo'));
-      return redirect(res, user.role === 'customer' ? customerHome(new URL(destination, origin)) : destination, { 'set-cookie': identities.issue(user) });
+      return redirect(res, user.role === 'customer' ? customerDestination(new URL(destination, origin)) : destination, { 'set-cookie': identities.issue(user) });
     }
     const token = (req.headers.cookie || '').split(';').map(s => s.trim()).find(s => s.startsWith(cookie + '='))?.slice(cookie.length + 1);
     if (url.pathname === '/signout-with-chatgpt') { identities.remove(token); return redirect(res, '/__host/login', { 'set-cookie': identities.cookie('') }); }
@@ -135,14 +148,18 @@ const server = https.createServer(tls, async (req, res) => {
       return json(res, 403, { error: '账号权限已变更，请联系管理员。' });
     }
     if (session.refreshCookie) res.setHeader('set-cookie', session.refreshCookie);
-    if (await commerce.route(req,res,url,session.user)) return;
-    if (session.user.role === 'customer') {
-      if (url.pathname === '/' && req.method === 'GET') return redirect(res, customerHome(url));
-      if (customerEsimRoute(req.method, url.pathname)) {
-        if (await catalog.route(req, res, url, session.user)) return;
-        if (await purchases.route(req, res, url, session.user)) return;
-      }
+    const user = session.user;
+    const customer = user.role === 'customer';
+    if (customer && req.method === 'GET' && url.pathname === '/__host/shop') return redirect(res, customerDestination(url));
+    if (await commerce.route(req,res,url,user)) return;
+    if (customer && !(customerEsimRoute(req.method, url.pathname) || customerWorkbenchRoute(req.method, url.pathname))) {
       return json(res, 403, { error: '此账号无权访问该资源。' });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/session') {
+      return json(res, 200, { authenticated: true, viewer: viewerFor(config,user) });
+    }
+    if (customer && req.method === 'GET' && url.pathname === '/api/addresses/normalize') {
+      return json(res, 200, { configured: false, restricted: true });
     }
     if (req.method === 'GET' && (url.pathname === '/__host/esim-checkout.js' || url.pathname === '/__host/esim-checkout.css')) {
       const filename = url.pathname.endsWith('.css') ? 'esim-checkout.css' : 'esim-checkout.js';
@@ -173,6 +190,12 @@ const server = https.createServer(tls, async (req, res) => {
     // The outer gateway checks the original browser origin before normalization.
     if (req.headers.origin) headers.set('origin', origin);
     const payload = req.method === 'GET' || req.method === 'HEAD' ? undefined : await body(req, 2 * 1024 * 1024);
+    if (customer && url.pathname === '/api/resources/status') {
+      let fields;
+      try { fields=JSON.parse(payload.toString()); }
+      catch { return json(res,400,{error:'资源状态参数不完整'}); }
+      if (fields?.supplier !== 'eSIMAccess') return json(res,403,{error:'此账号无权访问该资源。'});
+    }
     const response = await mf.dispatchFetch(url.href, { method: req.method, headers, body: payload, redirect: 'manual' });
     res.statusCode = response.status;
     for (const [key, value] of response.headers) if (!['transfer-encoding', 'content-encoding', 'content-length'].includes(key)) res.setHeader(key, value);
@@ -184,6 +207,6 @@ const server = https.createServer(tls, async (req, res) => {
     console.error(JSON.stringify({ event: 'request_failed', path: req.url?.split('?')[0], time: new Date().toISOString() }));
   }
 });
-server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '1.3.0', port: config.port || 8443 })));
+server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '1.4.0', port: config.port || 8443 })));
 const cleanup = setInterval(() => { identities.cleanup(); for (const [key, value] of attempts) if (value.until < Date.now()) attempts.delete(key); }, 60_000);
 for (const event of ['SIGTERM', 'SIGINT']) process.on(event, () => { clearInterval(cleanup); clearInterval(commerceTimer); deposits.stop(); operations.close(); server.close(async () => { await mf.dispose(); process.exit(0); }); });

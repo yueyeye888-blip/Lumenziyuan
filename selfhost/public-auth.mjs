@@ -254,6 +254,9 @@ const passwordToggle = `document.querySelectorAll('[data-reveal]').forEach(butto
     button.setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
     button.setAttribute('aria-pressed', String(show));
   });
+});
+window.addEventListener('pageshow', event => {
+  if (event.persisted) document.querySelector('[data-fresh-login]')?.reset();
 });`;
 const scriptHash = createHash('sha256').update(passwordToggle).digest('base64');
 
@@ -282,9 +285,9 @@ function notice(error, message) {
   return '';
 }
 
-function emailInput(autocomplete='email', email='') {
+function emailInput(email='') {
   return `<div class="field"><label for="email">邮箱地址</label><input id="email" name="email" type="email" inputmode="email" autocapitalize="none" spellcheck="false"
-    autocomplete="${autocomplete}" maxlength="254" placeholder="请输入邮箱地址"${email ? ` value="${escape(email)}"` : ''} required></div>`;
+    autocomplete="off" maxlength="254" placeholder="请输入邮箱地址"${email ? ` value="${escape(email)}"` : ''} required></div>`;
 }
 
 function passwordInput(isNew, label) {
@@ -298,8 +301,8 @@ function passwordInput(isNew, label) {
 export function login(res, destination, error='', passwordChanged=false) {
   page(res,200,'登录账号',`<p class="lead">使用账号邮箱登录 Lumen 资源中心。</p>
     ${notice(error,passwordChanged?'登录密码已更新，请使用新密码登录。':'')}
-    <form method="post" action="/__host/login"><input type="hidden" name="returnTo" value="${escape(destination)}">
-    <div class="fields">${emailInput('username')}${passwordInput(false,'登录密码')}</div><button class="primary">登录</button></form>
+    <form method="post" action="/__host/login" autocomplete="off" data-fresh-login><input type="hidden" name="returnTo" value="${escape(destination)}">
+    <div class="fields">${emailInput()}${passwordInput(false,'登录密码')}</div><button class="primary">登录</button></form>
     <footer>还没有账号？ <a href="/__host/register">创建账号</a></footer>`);
 }
 
@@ -310,7 +313,7 @@ export function registrationPage(res, { status=200, email='', verify=false, erro
     <li class="${verify?'current':''}" ${verify?'aria-current="step"':''}>${reset?'重设密码':'验证并注册'}</li></ol>`;
   const intro = verify
     ? `输入 <b>${escape(email)}</b> 收到的六位验证码。`
-    : reset?'填写账号使用的邮箱，即可接收重置密码的验证码。':'使用邮箱注册，即可进入资源市场。';
+    : reset?'填写账号使用的邮箱，即可接收重置密码的验证码。':'使用邮箱注册，即可进入资源工作台。';
   const hiddenEmail=`<input type="hidden" name="email" value="${escape(email)}">`;
   const form=verify ? `
     <form method="post" action="${base}/verify">${hiddenEmail}<div class="fields">
@@ -318,7 +321,7 @@ export function registrationPage(res, { status=200, email='', verify=false, erro
     autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" minlength="6" placeholder="6 位数字" required></div>
     ${passwordInput(true,reset?'新登录密码':'设置登录密码')}</div><button class="primary">${reset?'重设登录密码':'注册并登录'}</button></form>
     <form class="aux" method="post" action="${base}/code">${hiddenEmail}<button class="link-button">重新发送验证码</button><a href="${base}">更换邮箱</a></form>`
-    : `<form method="post" action="${base}/code">${emailInput('email',email)}<button class="primary">发送验证码</button></form>`;
+    : `<form method="post" action="${base}/code" autocomplete="off">${emailInput(email)}<button class="primary">发送验证码</button></form>`;
   page(res,status,title,`<p class="lead">${intro}</p>${steps}${notice(error,message)}${form}
     <footer>${reset?'<a href="/__host/login">返回登录</a>':'已有账号？ <a href="/__host/login">登录</a><p class="employee">员工账号由管理员统一创建。</p>'}</footer>`);
 }

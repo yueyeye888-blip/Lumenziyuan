@@ -119,13 +119,32 @@ test('new server initializes and serves the complete release using only runtime 
     const customerLogin=await call(port,'/__host/login',{method:'POST',headers:formHeaders,
       body:new URLSearchParams({email:customerEmail,password:customerPassword,returnTo:'/__host/accounts'}).toString()});
     assert.equal(customerLogin.status,303);
-    assert.equal(customerLogin.headers.location,'/__host/shop');
+    assert.equal(customerLogin.headers.location,'/');
     const buyerCookie=customerLogin.headers['set-cookie'][0].split(';')[0];
     const buyer=path=>call(port,path,{cookie:buyerCookie});
-    assert.equal((await buyer('/')).headers.location,'/__host/shop');
-    assert.equal((await buyer('/?section=wallet&action=recharge')).headers.location,'/__host/shop?section=wallet&action=recharge');
-    assert.match((await buyer('/__host/shop?section=wallet')).body,/id="shop-balance"/);
-    for(const path of ['/__host/shop','/__host/wallet','/__host/commerce.js','/__host/commerce.css']) assert.equal((await buyer(path)).status,200,path);
+    const customerHome=await buyer('/');
+    assert.equal(customerHome.status,200);
+    assert.match(customerHome.body,/\/__host\/commerce-bridge\.js/);
+    assert.equal((await buyer('/?section=wallet&action=recharge')).status,200);
+    assert.equal((await buyer('/__host/shop?section=wallet&action=recharge')).headers.location,'/?section=wallet&action=recharge');
+    assert.equal((await buyer('/__host/shop')).headers.location,'/');
+    for(const path of ['/__host/wallet','/__host/security','/__host/commerce.js','/__host/commerce.css','/favicon.svg','/mail-delivery','/api/supplier-templates','/__host/template-archive/enhance.js']) {
+      assert.equal((await buyer(path)).status,200,path);
+    }
+    const viewer=JSON.parse((await buyer('/api/session')).body).viewer;
+    assert.equal(viewer.role,'customer');
+    assert.equal(viewer.isAdmin,false);
+    const emptyOverview=await buyer('/api/esim/overview');
+    assert.equal(emptyOverview.status,200,emptyOverview.body);
+    const overview=JSON.parse(emptyOverview.body);
+    assert.deepEqual(overview.viewer,viewer);
+    assert.deepEqual(overview.history,{total:0,items:[]});
+    assert.equal(overview.balance,undefined);
+    assert.equal(overview.esimQuota.availableRaw,0);
+    assert.deepEqual(JSON.parse((await buyer('/api/mail-deliveries')).body).records,[]);
+    assert.deepEqual(JSON.parse((await buyer('/api/addresses/normalize')).body),{configured:false,restricted:true});
+    assert.equal((await buyer('/api/address-orders/ADDR-20261120-FAKE0000')).status,404);
+    assert.equal((await buyer('/address-orders/ADDR-20261120-FAKE0000')).status,200);
     const wallet=JSON.parse((await buyer('/api/commerce/wallet')).body);
     assert.equal(wallet.role,'customer');assert.equal(wallet.availableRaw,0);
     assert.equal(wallet.email,customerEmail);
@@ -140,7 +159,7 @@ test('new server initializes and serves the complete release using only runtime 
     assert.equal((await buyer('/__host/template-archive/catalog')).status,403);
     assert.equal((await discount(session,customerEmail,null)).status,200);
     assert.equal(JSON.parse((await buyer('/api/commerce/address/price')).body).priceRaw,100000);
-    for(const path of ['/api/operations/accounts','/api/groups','/__host/template-archive/catalog','/__host/accounts','/api/warehouse','/api/esim/overview','/api/commerce/admin/deposits'])
+    for(const path of ['/api/operations/accounts','/api/groups','/__host/template-archive/catalog','/__host/accounts','/api/warehouse','/__host/template-archive/app.js','/api/esim/topups','/api/settings/telegram','/api/commerce/admin/deposits'])
       assert.equal((await buyer(path)).status,403,path);
     const adminWallet=JSON.parse((await get('/api/commerce/wallet')).body);
     assert.equal(adminWallet.canManageAccounts,true);
@@ -169,6 +188,11 @@ test('new server initializes and serves the complete release using only runtime 
       return call(port,path,{cookie,method,body,headers:{
         'Content-Type':'application/json','Content-Length':Buffer.byteLength(body),Origin:origin}});
     };
+    assert.equal((await write('/api/esim/export',buyerCookie,'POST',{ids:['not-owned']})).status,403);
+    assert.equal((await write('/api/esim/email',buyerCookie,'POST',{})).status,403);
+    assert.equal((await write('/api/addresses/normalize',buyerCookie,'POST',{address:'Private address'})).status,403);
+    assert.equal((await write('/api/resources/status',buyerCookie,'POST',{supplier:'warehouse',resourceId:'not-owned',status:'normal'})).status,403);
+    assert.equal((await write('/api/resources/status',buyerCookie,'POST',{supplier:'eSIMAccess',resourceId:'not-owned',status:'normal'})).status,403);
     const staffEmail='employee@example.invalid';
     const created=await write('/api/operations/accounts',session,'POST',{name:'Test employee',email:staffEmail,password});
     assert.equal(created.status,201);

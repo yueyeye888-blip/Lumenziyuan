@@ -161,7 +161,7 @@
   });
   document.addEventListener('click', (event) => {
     if (!showingWallet || !(event.target instanceof Element)) return;
-    const selected = event.target.closest('aside nav button, main > header [class*="absolute"] button');
+    const selected = event.target.closest('aside nav button, aside > button, main > header [class*="absolute"] button');
     if (!selected) return;
     const url = new URL(location.href);
     url.searchParams.delete('section');

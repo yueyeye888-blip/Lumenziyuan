@@ -27,9 +27,11 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
   const db = await mf.getD1Database('DB');
   const bindings = {RESOURCE_ADMIN_EMAILS:admin.email,ESIM_ACCESS_CODE:'fake-access',ESIM_SECRET_KEY:'fake-secret'};
   let profileReady = false;
+  let extraProfile = false;
   let failNextOrder;
   let wallet = 150_000;
   const submitted = [];
+  const queriedOrders = [];
   const records = new Map();
   const supplier = createEsimSupplier(bindings,async (url,options) => {
     assert.match(url,/^https:\/\/api\.esimaccess\.com\/api\/v1\/open\//);
@@ -52,12 +54,15 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     }
     if (url.endsWith('/esim/query')) {
       assert.equal(body.pager.pageSize,50);
+      assert.ok(body.orderNo);
+      queriedOrders.push(body.orderNo);
       if (!profileReady) return fail('200010');
       const purchase=records.get(body.orderNo);
       const esimList=purchase.packageInfoList.flatMap(plan => Array.from({length:plan.count},(_,index) => ({
         orderNo:body.orderNo,esimTranNo:body.orderNo+'_'+plan.packageCode+'_'+index,
         packageList:[{packageCode:packageList.find(item=>item.slug===plan.packageCode).packageCode}],
       })));
+      if (extraProfile) esimList.push({orderNo:body.orderNo,esimTranNo:'OTHER_UNASSIGNED_CARD'});
       return success({esimList});
     }
     throw Error('Unexpected supplier request');
@@ -77,7 +82,7 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     if (!await api.route(req,res,new URL(req.url,origin),identities[req.headers['x-test-user']])) res.writeHead(404).end();
   });
   try {
-    const migrations = ['0000_empty_killraven','0001_fuzzy_skullbuster','0003_dark_paladin','0004_unique_luckman'];
+    const migrations = ['0000_empty_killraven','0001_fuzzy_skullbuster','0002_sour_jack_flag','0003_dark_paladin','0004_unique_luckman'];
     for (const file of migrations) {
       const sql=readFileSync(new URL('../drizzle/'+file+'.sql',import.meta.url),'utf8');
       await db.batch(sql.split('--> statement-breakpoint').map(statement=>statement.trim()).filter(Boolean).map(statement=>db.prepare(statement)));
@@ -203,7 +208,23 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     assert.equal(submitted.at(-1).amount,13_000);
     assert.equal(funds.balance(customer.id),54_000);
     assert.equal((await request(orderPath+'?id='+selfService.data.order.id,staff)).status,404);
-    assert.equal((await request('/api/esim/purchase-cards?id='+selfService.data.order.id,customer)).data.cards.length,1);
+    const cardCheck=await request('/api/esim/purchase-cards?id='+selfService.data.order.id,customer);
+    assert.equal(cardCheck.data.cards.length,1);
+    const queriedBefore=queriedOrders.length;
+    assert.deepEqual(await api.customerProfiles({...customer,id:'brand-new'}),{items:[],partial:false,available:true});
+    assert.equal(queriedOrders.length,queriedBefore);
+    const resourceId = cardCheck.data.cards[0].resourceId;
+    await db.prepare(`INSERT INTO resource_status_overrides
+      (id,supplier,resource_id,status,note,marked_by_user_id,marked_by_email) VALUES
+      (?,'eSIMAccess',?,'temporary_unavailable','Tester marked this card',?,?)`)
+      .bind('eSIMAccess:'+resourceId,resourceId,customer.id,customer.email).run();
+    extraProfile = true;
+    const own=await api.customerProfiles(customer);
+    extraProfile = false;
+    assert.equal(own.items[0].override.note,'Tester marked this card');
+    assert.deepEqual(own.items.map(({profile})=>profile.esimTranNo),[cardCheck.data.cards[0].resourceId]);
+    assert.deepEqual(queriedOrders.slice(queriedBefore),[selfService.data.order.orderNo]);
+    assert.equal(own.partial,false);
     // Simulate a process exit after the balance hold and before a vendor request;
     // an accepted order with an interrupted local settlement must be replayed once.
     const beforeRestart=funds.balance(customer.id);

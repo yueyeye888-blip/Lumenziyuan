@@ -139,6 +139,7 @@ type PlatformOverview = {
     email: string;
     displayName: string;
     isAdmin: boolean;
+    role?: "admin" | "employee" | "customer";
     canManageAccounts?: boolean;
   };
   balance?: { raw: number; amount: number; currency: string };
@@ -407,7 +408,7 @@ export default function Home() {
   >("store");
   const [activeGroup, setActiveGroup] = useState("全部资源");
   const [query, setQuery] = useState("");
-  const [favorites, setFavorites] = useState<string[]>([]);
+  const [favoriteState, setFavoriteState] = useState<{ key: string; items: string[] }>({ key: "", items: [] });
   const [selected, setSelected] = useState<string[]>([]);
   const [purchaseOpen, setPurchaseOpen] = useState(false);
   const [pin, setPin] = useState("");
@@ -429,7 +430,11 @@ export default function Home() {
   const [maxPrice, setMaxPrice] = useState("0");
   const [userMenu, setUserMenu] = useState(false);
   const [addressTemplateId, setAddressTemplateId] = useState<number | null>(null);
-  const isAdmin = Boolean(overview.viewer?.isAdmin);
+  const viewer = overview.viewer;
+  const isAdmin = Boolean(viewer?.isAdmin);
+  const isCustomer = viewer?.role === "customer";
+  const favoriteKey = viewer?.userId ? (isCustomer ? `lumen-favorites:${viewer.userId}` : "lumen-favorites") : "";
+  const favorites = favoriteState.key === favoriteKey ? favoriteState.items : [];
 
   const loadGroups = async () => {
     const response = await fetch("/api/groups", { cache: "no-store" });
@@ -454,15 +459,17 @@ export default function Home() {
           response.json() as Promise<{ viewer?: PlatformOverview["viewer"] }>,
       )
       .then((session) => {
-        if (active && session.viewer)
+        if (active && session.viewer) {
           setOverview((current) => ({ ...current, viewer: session.viewer }));
+          if (session.viewer.role !== "customer") void loadGroups().catch(() => undefined);
+        }
       })
       .catch(() => undefined);
     fetch("/api/esim/overview")
       .then((response) => response.json() as Promise<PlatformOverview>)
       .then((overviewData) => {
         if (!active) return;
-        setOverview(overviewData);
+        setOverview((current) => ({ ...overviewData, viewer: overviewData.viewer || current.viewer }));
       })
       .catch(() => {
         if (active)
@@ -472,15 +479,6 @@ export default function Home() {
             error: "实时数据同步失败",
           }));
       });
-    const stored = window.localStorage.getItem("lumen-favorites");
-    if (stored) {
-      try {
-        setFavorites(JSON.parse(stored));
-      } catch {
-        /* ignore invalid local state */
-      }
-    }
-    void loadGroups();
     return () => {
       active = false;
     };
@@ -554,8 +552,23 @@ export default function Home() {
   ]);
 
   useEffect(() => {
-    window.localStorage.setItem("lumen-favorites", JSON.stringify(favorites));
-  }, [favorites]);
+    if (!favoriteKey) return;
+    try {
+      const stored: unknown = JSON.parse(window.localStorage.getItem(favoriteKey) || "[]");
+      const items = Array.isArray(stored) ? stored.filter((item): item is string => typeof item === "string") : [];
+      setFavoriteState({ key: favoriteKey, items });
+    } catch {
+      setFavoriteState({ key: favoriteKey, items: [] });
+    }
+  }, [favoriteKey]);
+  useEffect(() => {
+    if (!favoriteState.key) return;
+    try {
+      window.localStorage.setItem(favoriteState.key, JSON.stringify(favoriteState.items));
+    } catch {
+      /* Browsers can disable or cap local storage. */
+    }
+  }, [favoriteState]);
 
   const visibleProducts = useMemo(
     () =>
@@ -566,9 +579,10 @@ export default function Home() {
   );
 
   const toggleFavorite = (id: string) =>
-    setFavorites((items) =>
-      items.includes(id) ? items.filter((item) => item !== id) : [...items, id],
-    );
+    setFavoriteState(({ key, items }) => ({
+      key,
+      items: items.includes(id) ? items.filter((item) => item !== id) : [...items, id],
+    }));
   const toggleSelected = (id: string) =>
     setSelected((items) =>
       items.includes(id) ? items.filter((item) => item !== id) : [...items, id],
@@ -612,7 +626,7 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f5f7fb] text-[#172033]">
+    <div data-workbench-role={viewer?.role ?? "pending"} className="min-h-screen bg-[#f5f7fb] text-[#172033]">
       <aside
         className={`${mobileNav ? "translate-x-0" : "-translate-x-full"} fixed inset-y-0 left-0 z-40 flex w-[244px] flex-col bg-[#172a52] text-white transition-transform lg:translate-x-0`}
       >
@@ -634,7 +648,7 @@ export default function Home() {
         </div>
         <nav className="flex-1 px-3 py-6 text-sm">
           <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[.18em] text-blue-200/70">
-            员工工作台
+            资源工作台
           </p>
           <NavItem
             icon={<LayoutDashboard size={18} />}
@@ -666,18 +680,19 @@ export default function Home() {
             active={view === "samples"}
             onClick={() => setView("samples")}
           />
+          <NavItem
+            icon={<Heart size={18} />}
+            label="我的收藏"
+            badge={String(favorites.length)}
+            active={view === "favorites"}
+            onClick={() => setView("favorites")}
+          />
+          <a href="/mail-delivery" className="mt-1 flex items-center gap-3 rounded-xl px-4 py-3 text-sm text-blue-100 hover:bg-white/[.06]"><Mail size={18} />邮件交付记录</a>
           {isAdmin && (
             <>
               <p className="mt-7 px-3 pb-2 text-[10px] font-semibold uppercase tracking-[.18em] text-blue-200/70">
                 管理员
               </p>
-              <NavItem
-                icon={<Heart size={18} />}
-                label="我的收藏"
-                badge={String(favorites.length)}
-                active={view === "favorites"}
-                onClick={() => setView("favorites")}
-              />
               <NavItem
                 icon={<WalletCards size={18} />}
                 label="账户余额"
@@ -710,7 +725,6 @@ export default function Home() {
                 active={view === "history"}
                 onClick={() => setView("history")}
               />
-              <a href="/mail-delivery" className="mt-1 flex items-center gap-3 rounded-xl px-4 py-3 text-sm text-blue-100 hover:bg-white/[.06]"><Mail size={18} />邮件交付记录</a>
             </>
           )}
         </nav>
@@ -726,14 +740,12 @@ export default function Home() {
             </p>
           </div>
         )}
-        {isAdmin && (
-          <button
-            onClick={() => setView("security")}
-            className={`${view === "security" ? "bg-white/10 text-white" : "text-blue-100 hover:bg-white/[.06]"} m-3 mt-0 flex items-center gap-3 rounded-xl px-4 py-3 text-sm`}
-          >
-            <Settings size={17} /> 安全与支付设置
-          </button>
-        )}
+        <button
+          onClick={() => setView("security")}
+          className={`${view === "security" ? "bg-white/10 text-white" : "text-blue-100 hover:bg-white/[.06]"} m-3 mt-0 flex items-center gap-3 rounded-xl px-4 py-3 text-sm`}
+        >
+          <Settings size={17} /> 安全与支付设置
+        </button>
       </aside>
       {mobileNav && (
         <button
@@ -784,7 +796,9 @@ export default function Home() {
                   <span className="block text-[11px] text-slate-500">
                     {isAdmin
                       ? "资源管理员 · 全部权限"
-                      : "员工账号 · 仅本人资源"}
+                      : isCustomer
+                        ? "用户账号 · 仅本人资源"
+                        : "员工账号 · 仅本人资源"}
                   </span>
                 </span>
                 <ChevronDown
@@ -874,12 +888,13 @@ export default function Home() {
             maxPrice={maxPrice}
             setMaxPrice={setMaxPrice}
             isAdmin={isAdmin}
+            isCustomer={isCustomer}
             hasMore={catalogHasMore}
             loadMore={() => setCatalogOffset((offset) => offset + 100)}
           />
         )}
         {view === "history" && <HistoryView overview={overview} />}
-        {view === "warehouse" && <WarehouseView />}
+        {view === "warehouse" && (isCustomer ? <RestrictedWarehouse /> : viewer && <WarehouseView />)}
         {view === "samples" && <SupplierTemplateLibrary key="address-generator" selectionMode initialTemplateId={addressTemplateId} onChooseTemplate={setAddressTemplateId} />}
         {view === "templates" && <SupplierTemplateLibrary key="global-library" onChooseTemplate={(id) => { setAddressTemplateId(id); setView("samples"); }} />}
         {view === "admin" && isAdmin && <AdminView overview={overview} />}
@@ -969,6 +984,7 @@ type StoreViewProps = {
   maxPrice: string;
   setMaxPrice: (value: string) => void;
   isAdmin: boolean;
+  isCustomer: boolean;
   hasMore: boolean;
   loadMore: () => void;
 };
@@ -998,6 +1014,7 @@ function StoreView(props: StoreViewProps) {
     maxPrice,
     setMaxPrice,
     isAdmin,
+    isCustomer,
     hasMore,
     loadMore,
   } = props;
@@ -1016,7 +1033,7 @@ function StoreView(props: StoreViewProps) {
           <p className="mt-2 text-sm text-slate-500">
             {isAdmin
               ? "按当前账号显示结算价，付款时 1 U 抵 1 美元。"
-              : "按分组查找套餐，使用账户余额购买。"}
+              : isCustomer ? "按国家和套餐条件查找，使用账户余额购买。" : "按分组查找套餐，使用账户余额购买。"}
           </p>
         </div>
         <div className="flex gap-2">
@@ -1097,7 +1114,7 @@ function StoreView(props: StoreViewProps) {
             <span className="px-2 text-xs text-slate-400">
               {isAdmin
                 ? "尚未建立业务分组，可点击右上角创建"
-                : "管理员尚未配置业务分组"}
+                : isCustomer ? "业务分组仅向员工开放" : "管理员尚未配置业务分组"}
             </span>
           )}
         </div>
@@ -1632,6 +1649,7 @@ function ResourceStatusPicker({
 }
 
 function HistoryView({ overview }: { overview: PlatformOverview }) {
+  const isCustomer = overview.viewer?.role === "customer";
   const items = overview.history?.items || [];
   const isAdmin = Boolean(overview.viewer?.isAdmin);
   const [selected, setSelected] = useState<string[]>([]);
@@ -1709,7 +1727,7 @@ function HistoryView({ overview }: { overview: PlatformOverview }) {
     window.setTimeout(() => setNotice(""), 4200);
   };
   return (
-    <div className="mx-auto max-w-[1480px] px-5 py-7 md:px-8 md:py-9">
+    <div data-customer-workbench={isCustomer ? "" : undefined} className="mx-auto max-w-[1480px] px-5 py-7 md:px-8 md:py-9">
       <section className="mb-7 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
         <div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-[#6582bd]">
@@ -1822,7 +1840,7 @@ function HistoryView({ overview }: { overview: PlatformOverview }) {
           ]}
         />
       </section>
-      <ResourceStatusPicker
+      {!isCustomer && <ResourceStatusPicker
         items={visibleItems}
         onManage={(item) =>
           setStatusTarget({
@@ -1833,7 +1851,7 @@ function HistoryView({ overview }: { overview: PlatformOverview }) {
             note: item.availabilityNote,
           })
         }
-      />
+      />}
       <PurchaseTable
         items={visibleItems}
         total={overview.history?.total || 0}
@@ -1844,6 +1862,7 @@ function HistoryView({ overview }: { overview: PlatformOverview }) {
         onRenew={(item) => setRenewTargets([item])}
         manageable
       />
+      <AddressOrderHistory />
       <section className="mt-6 grid gap-4 lg:grid-cols-3">
         <LifecycleNote
           icon={<QrCode size={18} />}
@@ -1910,6 +1929,42 @@ function HistoryView({ overview }: { overview: PlatformOverview }) {
         </div>
       )}
     </div>
+  );
+}
+
+type AddressOrderSummary = { id: string; name: string; status: string; createdAt: string };
+
+function AddressOrderHistory() {
+  const [orders, setOrders] = useState<AddressOrderSummary[] | null>(null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    const request = new AbortController();
+    fetch("/api/commerce/address/orders", { cache: "no-store", signal: request.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("加载失败");
+        const data = await response.json() as { orders: AddressOrderSummary[] };
+        if (!Array.isArray(data.orders)) throw new Error("无效订单列表");
+        setOrders(data.orders);
+      })
+      .catch(() => {
+        if (!request.signal.aborted) setError(true);
+      });
+    return () => request.abort();
+  }, []);
+  const status: Record<string, string> = { queued: "等待处理", filling: "正在填写", payment_pending: "等待付款", payment_confirmed: "等待交付", generating: "正在生成", delivered: "已交付", failed: "处理失败" };
+  return (
+    <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5" aria-label="地址生成订单">
+      <h2 className="text-base font-semibold">地址生成订单</h2>
+      {error ? <p className="mt-3 text-sm text-slate-500">订单暂时无法加载，请刷新页面后重试。</p>
+        : orders?.length ? <ul className="mt-3 divide-y divide-slate-200">
+          {orders.map((order) => (
+            <li key={order.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+              <div className="min-w-0"><p className="break-words text-sm font-medium">{order.name}</p><p className="mt-1 break-words text-xs text-slate-500">{order.id} · {formatDate(order.createdAt, true)}</p></div>
+              <div className="flex items-center gap-3"><span className="text-sm text-slate-600">{status[order.status] || "待确认"}</span><a className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-[#315c9f]" href={`/address-orders/${encodeURIComponent(order.id)}`}>查看订单</a></div>
+            </li>
+          ))}
+        </ul> : <p className="mt-3 text-sm text-slate-500">{orders ? "暂无地址生成订单。" : "正在加载订单…"}</p>}
+    </section>
   );
 }
 
@@ -2328,7 +2383,7 @@ function SecurityView({ overview }: { overview: PlatformOverview }) {
               {overview.viewer?.email}
             </p>
             <span className="mt-4 inline-flex rounded-full bg-[#eef3fb] px-3 py-1 text-[11px] text-[#4267ae]">
-              {overview.viewer?.isAdmin ? "资源管理员" : "员工账号"}
+              {overview.viewer?.isAdmin ? "资源管理员" : overview.viewer?.role === "customer" ? "用户账号" : "员工账号"}
             </span>
           </div>
         </div>
@@ -3691,6 +3746,19 @@ function WarehouseStatusManager({
         </p>
       )}
     </section>
+  );
+}
+
+function RestrictedWarehouse() {
+  return (
+    <div className="mx-auto max-w-[1480px] px-5 py-7 md:px-8 md:py-9">
+      <h1 className="text-2xl font-semibold tracking-tight md:text-[30px]">库存仓库与资源认领</h1>
+      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
+        <LockKeyhole size={20} className="text-[#4267ae]" />
+        <h2 className="mt-3 text-base font-semibold">员工账号专用</h2>
+        <p className="mt-2 text-sm text-slate-500">查看公司库存和认领记录需要员工权限。</p>
+      </section>
+    </div>
   );
 }
 
