@@ -1,5 +1,5 @@
 {
-  "version": "2026.11.26-commerce.11",
+  "version": "2026.11.26-commerce.12",
   "source": "YorkeAI self-host runtime",
   "includedReleases": [
     "mail-delivery",
@@ -28,7 +28,8 @@
     "country-template-filters-and-light-studio",
     "inline-official-template-introductions",
     "yorkeai-template-previews",
-    "five-day-expiry-and-watchlist-telegram-actions-v1.9.0"
+    "five-day-expiry-and-watchlist-telegram-actions-v1.9.0",
+    "truthful-verification-wait-status-v1.9.1"
   ],
   "portabilityChanges": [
     "authorize-site-outlook.mjs",
@@ -77,7 +78,7 @@
     "commerce/ui/catalog-countries.css": "ccbf5087135e1b663b96af6053f8e437cf9543dd3d3c9fb3ba231aa46b96f614",
     "commerce/ui/dashboard.css": "83175e29a6b35e7d9a708067db8c3cdb0ca9337723e84ab591465e9afd1fed84",
     "commerce/ui/locale-data.js": "b22dbb59b79083b17783ac75bd4cee60e0135526aee2cde4345d3b61159b602f",
-    "commerce/ui/locale-operations.js": "bf4b5603cfaa8e653143f3f0ff6b2be4836b907dcc5965863a2136a98cfa1178",
+    "commerce/ui/locale-operations.js": "a867c5bce88a80dcd901b1d8feb02371ad4ee8e6e118a34c6f826e51258f4770",
     "commerce/ui/locale.css": "132f9585d682d32f9cea73bc539656aecfa532afae0cfb9f75fb2326dd6980bc",
     "commerce/ui/locale.js": "d0e26d7a06a4042b760aa52880d0c0bf0fcb8499e73bed953532ccb3e48bc086",
     "commerce/ui/market-flags.css": "2b220409ebd5bc1f54b7b9d9136ec33e5d5be763d87465abd66ec4ff2bf8853d",
@@ -103,7 +104,7 @@
     "dist/client/_headers": "2148fb62669525f5091532d36d4a48a8da95b08a5a797bacde75d2fe981351bb",
     "dist/client/_next/static/83f23e6c-ed4d-4eb4-b058-363424dff477/_buildManifest.js": "47f02b34be6dc481257b6efce4c19e19111f37ef5c437f8ffed44f0da97fa9bb",
     "dist/client/_next/static/83f23e6c-ed4d-4eb4-b058-363424dff477/_ssgManifest.js": "653f3e53e89b4f8548ff86c19e92bb3c6b84b6be7485a320b1e00893ed877479",
-    "dist/client/_next/static/chunks/address-order-status-BTX-VmrS.js": "7954f88042e7571657d7b090e90051b53bc30de607c1a578e31329c61f284448",
+    "dist/client/_next/static/chunks/address-order-status-BTX-VmrS.js": "f0f8de95c8cc844b3bb037a2c29b15c8679545dd3d6f403324020ad0a1d1202c",
     "dist/client/_next/static/chunks/app-route-prefetch-policy-C_8SGXLI.js": "381e1a363b59f585deb92681d712d910dd8fe8e2cabc07bee14a4e13dc5123a3",
     "dist/client/_next/static/chunks/framework-D_rUT4EX.js": "939d0fabebb3b2f01753bb866b067d8d3384fb06da19f0e6557609d3b1a9f4f7",
     "dist/client/_next/static/chunks/index-Dy9QkPAh.js": "1788ae96c69f4ab92a2aa723dcfcc9246e30bddec39d60456103ac64b8d0a84d",
@@ -192,7 +193,7 @@
     "dist/server/_next/static/warehouse-email-C6zpeld9.js": "3908bf82bdc7d6ee1708d9f4379e8fb89e422b512eb3377e10fbba7ff4f4a6d0",
     "dist/server/index.js": "86d38232b9559ee8cd8f35ccaa68db877abd8f81eeb65f62936a0f47cdf226bb",
     "dist/server/ssr/__vite_rsc_assets_manifest.js": "58e34263102ea6020966a5d3780f09a727c5e351bf098537582948ab6e3018cc",
-    "dist/server/ssr/_next/static/address-order-status-KUcGNkvB.js": "2341a77355d2f96ec108a88565c46c1a407419f293c2e490796da0e944d49000",
+    "dist/server/ssr/_next/static/address-order-status-KUcGNkvB.js": "8be715c3112adb42e0ff3e3520587edcce4a9f353b6b35200f445328cf90f0c3",
     "dist/server/ssr/_next/static/app-prefetch-fetch-queue-BTKEsFpn.js": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "dist/server/ssr/_next/static/app-router-scroll-CAnSvlwI.js": "8aa68c48f347896ce1bc31ef186746a7cd9ae043f3e4e39a3856f13d1061bb3c",
     "dist/server/ssr/_next/static/error-boundary-mJ-SsUww.js": "013dad3c0ea62859d75ef290703dc2547d9df0b1222d9235cc9c6011c5b1d806",
@@ -229,8 +230,8 @@
     "drizzle/meta/_journal.json": "83707552cb2e8464125bf6da9d6391a8f86273e98adc25ff1da77afdc6436734",
     "initialize.mjs": "32dd89b9b7439f20822c2a723bc9a9dc06371464c130d2b472d210eb22473ff9",
     "outlook-mail.mjs": "bfaa0e528b3410949e1881490c867a4fb91247715d798173d2b3b9cf335a4437",
-    "package-lock.json": "3abb73f1dd4a8940f43ad9486491700ea05a34cc6cc2a4bfcecab8a836b2a572",
-    "package.json": "b8487e52e02c4bb3e7f6f5ea5de20ea59c0d38e51b618a6855b1fb691a85bd28",
+    "package-lock.json": "cf1b5bc4b2c3f70b09615dbfbcdc1b43be18856cdb152c14c67ae990c4ef4594",
+    "package.json": "94a544f41b5b58f9a7864a4c810b327395b4be548294081579262babe9743146",
     "private-template-archive.mjs": "eb4817f4a57b85c0202774311f180349b7035055c16e52205bc0b7838018ead3",
     "public-auth.mjs": "24739e3ab8fe1faf2c505868b9e9fe75fd217a38d4b9b50920ac670773706863",
     "registration.mjs": "2cab28245e400ea96877291d2c498bf0121d72e4f600ad3ccec7d54833a6daf3",
@@ -255,7 +256,7 @@
     "resource-operations/session-store.mjs": "45c7ff900b9eee37d418e55edab9562683a57196553904f410ad9b07520bc77f",
     "runtime.mjs": "484f421f8cf5c3dcba19b4ad776f95a5bfec2fea4d57505abc783064974ea081",
     "sample-mail-attachments.mjs": "70dcc3db130e03e072bf24e9d49dd6d35b2601bfc5b22e0d7adc9ed20f6ae337",
-    "server.mjs": "fdef49f70cddebb43bb2d97f40780ec1c6e919af0103e84957f459ffb14eabef",
+    "server.mjs": "c4b30f05ba368733efeb706294b34fa9f4498edc9faba5eedb74908ab37359da",
     "setup.mjs": "cf977ed6d85ee23ade8278f8bc3205605b5487ef47a40da9259592918120b0fa",
     "site-order-queue.mjs": "3d0ef29ed8265cbedd55971f4020f6a0b20e3836d495b3fde9cee45285d501b5",
     "sync-template-introductions.mjs": "ca3c747018b76b2c173deb6b15d6673083ae464c439617595807e62d11af90f2",

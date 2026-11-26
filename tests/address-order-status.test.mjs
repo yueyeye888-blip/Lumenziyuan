@@ -57,3 +57,14 @@ test("late receipt clears the warning and terminal states remain authoritative",
   assert.equal(orderDisplay({ status: "delivered", updatedAt: past }, now).tone, "ready");
   assert.equal(orderDisplay({ status: "failed", updatedAt: past }, now).tone, "error");
 });
+
+test("reported verification waits expire into an unconfirmed-status warning", () => {
+  const row = { status: "filling", statusMessage: "等待人工人机验证：请完成验证", updatedAt: "2026-11-26T09:06:14Z" };
+  const updated = orderTime(row.updatedAt);
+  assert.equal(orderDisplay(row, updated + 299999).title, "等待第三方验证确认");
+  assert.equal(orderDisplay(row, updated + 300000).title, "处理进展待核实");
+  assert.equal(orderDisplay(row, updated + 3600000).tone, "warning");
+  assert.equal(row.status, "filling");
+  assert.equal(orderDisplay({ ...row, status: "failed" }, updated + 300000).tone, "error");
+  assert.equal(orderDisplay({ ...row, status: "filling", statusMessage: "正在处理" }, updated + 300000).tone, "working");
+});

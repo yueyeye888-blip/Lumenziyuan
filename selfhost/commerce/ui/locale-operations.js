@@ -271,3 +271,10 @@ window.LumenLocaleExtraPatterns.push(
 );
 
 window.LumenLocaleExtra['暂时无法读取提醒关联的 eSIM，请刷新页面。'] = 'Could not load the eSIM from this reminder. Please refresh.';
+
+Object.assign(window.LumenLocaleExtra, {
+  '处理进展待核实': 'Processing status needs confirmation',
+  '超过 5 分钟未收到新的处理回执，当前验证及处理结果尚未确认。请联系管理员核查订单状态。': 'No processing update has arrived in 5 minutes. The verification and processing results are unconfirmed. Ask your administrator to check this order.',
+  '等待第三方验证确认': 'Waiting for verification confirmation',
+  '后台报告正在等待验证结果。如果第三方页面明确提示需要人工验证，请按其正常提示操作。本站会继续查询订单状态。': 'The processing service reports that it is waiting for verification. If the provider explicitly requests a manual check, follow its instructions. This site will continue checking the order status.',
+});
