@@ -57,7 +57,7 @@ export default function AddressOrderStatus({ requestNo }: { requestNo: string })
   return <main className="min-h-screen bg-[radial-gradient(circle_at_top,#eef4ff_0,#f6f8fc_42%,#edf1f7_100%)] px-4 py-5 text-[#202938] sm:px-8 sm:py-8">
     <div className="mx-auto max-w-7xl">
       <header className="flex flex-col gap-4 rounded-[28px] border border-[#d5dfec] bg-white/90 px-5 py-5 shadow-[0_12px_35px_rgba(51,72,103,0.08)] sm:flex-row sm:items-center sm:justify-between sm:px-8">
-        <div className="flex items-center gap-4"><span className="flex size-12 items-center justify-center rounded-2xl bg-[#2169df] text-white"><MapPin size={28} fill="currentColor" /></span><div><p className="text-lg font-semibold sm:text-2xl">Lumen 地址订单</p><p className="mt-0.5 text-xs text-slate-400">订单处理状态实时更新</p></div></div>
+        <div className="flex items-center gap-4"><span className="flex size-12 items-center justify-center rounded-2xl bg-[#2169df] text-white"><MapPin size={28} fill="currentColor" /></span><div><p className="text-lg font-semibold sm:text-2xl">Yorke AI 地址订单</p><p className="mt-0.5 text-xs text-slate-400">订单处理状态实时更新</p></div></div>
         <a href="/" className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-[#ccd9ea] px-5 text-sm font-medium text-[#294a77]"><ArrowLeft size={17} />返回主页</a>
       </header>
 

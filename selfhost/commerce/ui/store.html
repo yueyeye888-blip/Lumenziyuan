@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>账户与资源市场 · Lumen</title>
+    <title>账户与资源市场 · Yorke AI</title>
     <link rel="stylesheet" href="/__host/commerce.css" />
     <script src="/__host/commerce.js" defer></script>
   </head>
@@ -11,21 +11,21 @@
     <header>
       <div class="wrap bar">
         <a class="brand" href="/"
-          ><b aria-hidden="true">L</b> <span>Lumen<small>资源中心</small></span></a
+          ><b aria-hidden="true">Y</b> <span>Yorke AI<small>资源中心</small></span></a
         >
         <nav aria-label="主导航">
           <a href="/" id="resource-home">资源工作台</a>
           <a href="/__host/wallet" class="wallet-link"
             ><span class="ui-icon wallet-icon" aria-hidden="true"></span>钱包 / 充值</a
           >
+          <a href="/__host/refund-review" id="refund-admin-link" hidden>退款审核</a>
           <a href="/__host/accounts" id="staff-admin-link" hidden>合伙人与额度</a>
         </nav>
         <details class="profile-menu">
           <summary>账户</summary>
           <div>
             <p id="account"></p>
-            <a href="/__host/security">支付密码</a
-            ><a id="review-link" href="/__host/payment-review" hidden>收款核对</a>
+            <a id="review-link" href="/__host/payment-review" hidden>收款核对</a>
             <a href="/signout-with-chatgpt">退出登录</a>
           </div>
         </details>
@@ -47,7 +47,6 @@
           <div class="wallet-actions">
             <p class="employee-wallet" id="employee-wallet" hidden>合伙人余额由管理员分配</p>
             <button id="recharge" type="button" hidden><span aria-hidden="true">+</span> 充值 USDT</button>
-            <a class="wallet-settings" href="/__host/security">管理支付密码 <span aria-hidden="true">↗</span></a>
           </div>
         </section>
         <section id="supplier-funds" class="supplier-funds" hidden>
@@ -102,33 +101,6 @@
           <div id="invoice-data"></div>
           <p class="modal-feedback" role="status" hidden></p>
         </dialog>
-      </div>
-      <div id="security" hidden>
-        <section class="settings-card">
-          <form id="pin-form">
-            <label
-              >原支付密码<input
-                name="currentPin"
-                type="password"
-                pattern="[0-9]{6}"
-                maxlength="6"
-                inputmode="numeric"
-                autocomplete="off"
-              /><small>首次设置可留空</small></label
-            >
-            <label
-              >新的六位支付密码<input
-                name="newPin"
-                type="password"
-                pattern="[0-9]{6}"
-                maxlength="6"
-                inputmode="numeric"
-                autocomplete="new-password"
-                required
-            /></label>
-            <button>保存支付密码</button>
-          </form>
-        </section>
       </div>
       <div id="payment-review" hidden>
         <section>
@@ -188,19 +160,11 @@
               ><label>地址第 2 行<input name="line2" maxlength="160" autocomplete="off" /></label
               ><label>地址第 3 行<input name="line3" maxlength="160" autocomplete="off" /></label
               ><label>接收邮箱<input name="email" type="email" required autocomplete="off" /></label
-              ><label
-                >支付密码<input
-                  name="pin"
-                  type="password"
-                  inputmode="numeric"
-                  pattern="[0-9]{6}"
-                  maxlength="6"
-                  required
-              /></label>
+              >
               <div class="address-payment">
-                <p class="hint">付款后开始生成。订单处理失败时，支付金额会退回账户余额。</p>
+                <p class="hint">付款后进入队列。程序异常时，由平台人工复核退款。</p>
                 <div class="buttons">
-                  <button id="address-pay" disabled>支付并生成</button><a href="/__host/security">设置支付密码</a>
+                  <button id="address-pay" disabled>支付并生成</button>
                 </div>
               </div>
             </form>

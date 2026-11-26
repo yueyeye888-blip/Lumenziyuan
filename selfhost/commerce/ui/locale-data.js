@@ -1,9 +1,9 @@
 // Static product interface copy. Vendor product names and user data stay in
 // their original form; localized country and region names come from Intl.
 window.LumenLocaleData = Object.fromEntries(`
-Lumen资源申购中心|Lumen Resource Center
-Lumen 资源中心|Lumen Resource Center
-账户与资源市场 · Lumen|Account and Marketplace · Lumen
+Yorke AI资源申购中心|Yorke AI Resource Center
+Yorke AI 资源中心|Yorke AI Resource Center
+账户与资源市场 · Yorke AI|Account and Marketplace · Yorke AI
 资源中心|Resource Center
 资源工作台|Resource Workspace
 资源市场|Resource Market
@@ -468,7 +468,7 @@ eSIM 套餐|eSIM Plans
 已有账号？|Already have an account?
 使用 12–128 个字符。|Use 12–128 characters.
 使用邮箱注册，即可进入资源工作台。|Register with your email to access the resource workspace.
-使用账号邮箱登录 Lumen 资源中心。|Sign in to Lumen Resource Center with your account email.
+使用账号邮箱登录 Yorke AI 资源中心。|Sign in to Yorke AI Resource Center with your account email.
 填写账号使用的邮箱，即可接收重置密码的验证码。|Enter the email for your account to receive a password reset code.
 邮箱验证码|Email Verification Code
 发送验证码|Send Code
@@ -485,7 +485,7 @@ eSIM 套餐|eSIM Plans
 `.trim().split('\n').map((line) => line.split('|')));
 
 Object.assign(window.LumenLocaleData, Object.fromEntries(`
-Lumen 资源申购中心|Lumen Resource Center
+Yorke AI 资源申购中心|Yorke AI Resource Center
 公司内部数字资源统一申购、额度采购、交付与续订平台|Digital resource ordering, payment, delivery, and renewals
 填写个人资料|Enter Personal Details
 姓名|Name
@@ -529,9 +529,7 @@ Lumen 资源申购中心|Lumen Resource Center
 标准价 10 U|Standard Price 10 U
 U / 份|U / document
 U / 次|U / download
-处理失败后，费用退回账户余额。|If processing fails, the fee is returned to your wallet.
-付款后开始处理。订单失败时，费用会退回账户余额。|Processing starts after payment. If the order fails, the fee is returned to your wallet.
-付款后开始生成。订单处理失败时，支付金额会退回账户余额。|Generation starts after payment. If the order fails, the fee is returned to your wallet.
+付款后进入队列。程序异常时，由平台人工复核退款。|Paid orders enter the queue. The platform owner reviews refunds for processing faults.
 按所选模板生成，完成后发送到你填写的邮箱。|Generate from the chosen template and send it to the supplied email.
 自动生成地址|Generate Address Automatically
 按所选国家随机生成三行英文地址，生成后仍可手动修改。|Generate three English address lines for the selected country. You can edit them afterward.
@@ -568,14 +566,14 @@ AI 翻译尚未启用，请管理员完成 OpenAI 服务配置。你仍可手动
 请输入本次接收邮箱|Enter the recipient email for this order
 本次提交模版：|Template for This Order:
 请从下方选择一个模版|Select a template below
-全部条目来自原平台目录，保留原名称、编号与预览图。|The original template names, IDs, and previews are retained.
+模版名称和编号与原平台目录一致。|Template names and IDs match the source catalog.
 提交资料后，所选模版会随 Telegram 消息发送，并由 Windows 自动化在 addrs.xyz 中同步选择。|After submission, the selected template is sent via Telegram and selected at addrs.xyz.
 全球模版库|Global Template Library
 全球模板库|Global Template Library
 全球地址证明模版库|Global Proof of Address Templates
 驾驶证+签证|Driver Licenses and Visas
 驾驶证与签证|Driver Licenses and Visas
-LUMEN · 全球模版库|LUMEN · Global Template Library
+Yorke AI · 全球模版库|Yorke AI · Global Template Library
 驾驶证+签证 · 全球模版库|Driver Licenses and Visas · Global Template Library
 返回全球模版库|Back to Global Template Library
 按国家和模版类型浏览，查看介绍、对应图片及文件资料。|Browse by country and template type to view descriptions, previews, and file details.
@@ -596,9 +594,9 @@ LUMEN · 全球模版库|LUMEN · Global Template Library
 搜索驾驶证或签证模版|Search driver license or visa templates
 搜索原模板|Search Original Templates
 搜索原模版|Search Original Templates
-从全球模版库中选择任意模版，查看原平台水印预览。|Choose any template from the global library and view its original watermarked preview.
-从全球地址证明模版库中选择任意模版，查看原平台水印预览。|Choose a global proof-of-address template and view its original watermarked preview.
-原站真实条目与官方水印预览，点击模版可放大，也可选入地址证明生成器。|Open a template to enlarge its original watermarked preview or use it in the proof of address generator.
+从全球模版库中选择任意模版，查看 YorkeAI 水印预览。|Choose any template from the global library and view its YorkeAI watermarked preview.
+从全球地址证明模版库中选择任意模版，查看 YorkeAI 水印预览。|Choose a global proof-of-address template and view its YorkeAI watermarked preview.
+点击模版可放大查看 YorkeAI 水印预览，也可选入地址证明生成器。|Open a template to enlarge its YorkeAI watermarked preview or use it in the proof of address generator.
 地址证明|Proof of Address
 账单与地址证明模版|Statements and Proof of Address Templates
 可预览 · 原文件付费下载|Preview Available · Paid Original Download
@@ -606,9 +604,8 @@ LUMEN · 全球模版库|LUMEN · Global Template Library
 预览|Preview
 预览与介绍|Preview and Description
 查看预览|View Preview
-查看原预览|View Original Preview
 对应预览图暂时无法加载|Preview temporarily unavailable
-原站预览暂时无法加载|Original preview temporarily unavailable
+暂无样张|No preview available
 可通过官方介绍页查看|See the original template page
 当前选择的原平台模版|Current Original Template
 当前选择|Current Selection
@@ -616,7 +613,7 @@ LUMEN · 全球模版库|LUMEN · Global Template Library
 选择此模版|Choose This Template
 在生成器中选择|Choose in Generator
 打开官方模板介绍|Open Original Template Details
-此处展示原站公开的水印预览图；文件标注的总页数不代表有完整多页预览。|The preview is the public watermarked image provided by the original site. It may cover fewer pages than the full file.
+样张带有 YorkeAI 水印。预览页数可能少于完整文件。|This sample has a YorkeAI watermark. The full file may contain more pages.
 原平台目录信息|Original Catalog Information
 模板名称|Template Name
 模版名称|Template Name
@@ -669,7 +666,7 @@ LUMEN · 全球模版库|LUMEN · Global Template Library
 下载 ·|Download ·
 地址生成订单|Address Generation Orders
 地址证明订单|Proof of Address Orders
-Lumen 地址订单|Lumen Address Order
+Yorke AI 地址订单|Yorke AI Address Order
 订单处理状态实时更新|Order Status Updates in Real Time
 暂无地址生成订单。|No address generation orders yet.
 正在加载订单…|Loading orders…
@@ -863,10 +860,10 @@ eSIM 激活码（AC）|eSIM Activation Code (AC)
 到期与流量提醒|Expiry and Data Alerts
 到期阈值|Expiry Threshold
 余量阈值|Remaining Data Threshold
-提前 5 天|5 Days in Advance
+提前 5 天和 1 天|5 and 1 Days Before Expiry
 低于 10%|Below 10%
 30 天内到期|Expires Within 30 Days
-Telegram 将在到期前 5 天提醒管理员|Telegram alerts the administrator five days before expiry.
+Telegram 将在到期前 5 天和 1 天提醒管理员|Telegram alerts the administrator five days and one day before expiry.
 Telegram 资源提醒|Telegram Resource Alerts
 配置 Telegram 机器人|Configure Telegram Bot
 配置机器人|Configure Bot
@@ -991,7 +988,7 @@ $ {0} 以下|Up to $ {0}
 供应商共返回 {0} 件|Provider Returned {0} Items
 共 {0} 件 · 数据来自 eSIMAccess 主账号|{0} Items · From the eSIMAccess Main Account
 {0} 对应预览图|Preview for {0}
-{0} · 原平台水印预览|{0} · Original Watermarked Preview
+{0} · YorkeAI 水印预览|{0} · YorkeAI Watermarked Preview
 {0} 原模板预览|Original Preview for {0}
 放大已选模版 {0}|Enlarge Selected Template {0}
 预览原模板 {0}|Preview Original Template {0}
@@ -1038,7 +1035,7 @@ Object.assign(window.LumenLocaleData, Object.fromEntries(`
 暂不可认领|Temporarily unavailable
 无法确认此批次售价|The price of this batch could not be confirmed
 请求方式不支持。|Unsupported request method.
-请在本站完成认领。|Make this claim on the Lumen website.
+请在本站完成认领。|Make this claim on the Yorke AI website.
 请刷新库存，核对售价、数量和接收邮箱。|Refresh inventory and check the price, quantity, and recipient email.
 认领状态待核对，请使用原请求重试。|The claim result is pending. Retry with the original request.
 部分已购资源暂时无法同步，请稍后刷新。|Some purchases could not be synced. Refresh again later.
@@ -1057,7 +1054,7 @@ Outlook 邮箱授权验证失败|Could not verify Outlook authorization
 `.trim().split('\n').map((line) => line.split('|'))));
 
 Object.assign(window.LumenLocaleData, Object.fromEntries(`
-Lumen 资源中心首页|Lumen Resource Center Home
+Yorke AI 资源中心首页|Yorke AI Resource Center Home
 创建账号进度|Account Setup Progress
 找回登录密码进度|Password Reset Progress
 eSIM 套餐列表|eSIM Plan List
@@ -1287,3 +1284,85 @@ Object.assign(window.LumenLocaleData, Object.fromEntries(`
 越南语、英语|Vietnamese and English
 马来语、英语、中文|Malay, English, and Chinese
 `.trim().split('\n').map((line) => line.split('|'))));
+
+Object.assign(window.LumenLocaleData, Object.fromEntries(`
+客服|Support
+客服中心|Support center
+返回平台|Back to workspace
+地址订单|Address order
+提交工单|Submit a ticket
+客服通知|Support inbox
+客服消息|Support message
+工单|Ticket
+联系客服|Contact support
+查看工单|View tickets
+发送|Send
+回复|Reply
+发送回复|Send reply
+关闭|Close
+未读|Unread
+类型|Type
+订单号（选填）|Order number (optional)
+问题描述|How can we help?
+请简述你遇到的问题|Briefly describe the issue
+请先登录后再发送。|Sign in to send a message.
+登录后发送消息|Sign in to contact support
+请重新登录。|Please sign in again.
+已发送，可在客服中心查看回复。|Message sent. Check the support center for a reply.
+仅平台所有者可以查看客服通知。|The platform owner can view the support inbox.
+客服暂时不可用。|Support is temporarily unavailable.
+暂无客服消息。|No support messages yet.
+正在加载…|Loading…
+返回消息列表|Back to inbox
+客服回复|Support reply
+退款审核|Refund review
+待审核|Pending
+已处理|Resolved
+待复核|Pending review
+已批准退款|Refund approved
+未批准退款|Refund declined
+已交付|Delivered
+核查异常地址订单。审批通过后，实扣金额退回原平台余额。|Review address orders that encountered issues. Approved refunds return the amount charged to the original account balance.
+页面导航|Page navigation
+审核状态|Review status
+退款记录|Refund records
+翻页|Pagination
+登记原因|Reason for review
+登记时间|Reported on
+处理时间|Resolved on
+实扣金额|Amount charged
+审核说明|Review notes
+填写核查结果|Summarize your findings
+审核订单|Review order
+批准退款|Approve refund
+不予退款|Decline refund
+暂无已处理订单。|No resolved cases yet.
+暂无待审核订单。|No cases awaiting review.
+处理失败，请核实是否为程序故障|Processing failed. Verify whether a system issue caused the failure.
+处理回执超过 10 分钟未更新，请核查执行和交付记录|No status update for more than 10 minutes. Check the processing and delivery records.
+接单程序超过 3 分钟无响应，原订单已撤出队列|The order processor was unresponsive for more than three minutes. The order was removed from the queue.
+`.trim().split('\n').map(line => line.split('|'))));
+Object.assign(window.LumenLocalePatterns, {
+  '工单 #{0}': 'Ticket #{0}',
+  '客服消息 #{0}': 'Support message #{0}',
+});
+Object.assign(window.LumenLocaleData, {
+  '待审核金额':'Amount pending review','地区筛选':'Filter by region','归档':'Archive','恢复':'Restore',
+  '请选择一个模版':'Select a template','确认续订':'Confirm renewal','支付密码已停用。':'Payment PINs have been retired.',
+  '到期前 5 天和 1 天':'5 days and 1 day before expiry'
+});
+
+Object.assign(window.LumenLocaleData, {
+  '按国家或地区筛选模板':'Filter templates by country or region', '全部':'All', '未标注':'Unspecified',
+  '展开全部':'Show all', '收起':'Show less', '香港':'Hong Kong', '澳门':'Macao', '台湾':'Taiwan'
+});
+Object.assign(window.LumenLocaleData, {
+  '模板预览内容':'Template preview content','水印预览':'Watermarked preview','官方模板介绍':'Official template details',
+  '资料一览':'Reference details','模板包含':'Included in this template','样张备注':'Sample notes',
+  '正在读取官方介绍…':'Loading official details…','官方介绍暂时无法读取':'Official details are temporarily unavailable.',
+  '官方目录尚未提供这款模板的详细说明。':'The official catalog has not provided a detailed description for this template.',
+  '资料来源 · Addrs.xyz 官方模板目录':'Source · Official Addrs.xyz template catalog','可在预览窗口内查看官方介绍':'Official details are available in the preview.',
+  '机构/服务名称':'Institution or service','中文名称':'Chinese name','机构类型':'Institution type','原文名称':'Original name',
+  '可能使用地区':'Applicable locations','主要语言':'Primary language','货币':'Currency','展示账户/服务':'Account or service',
+  '展示内容':'Contents','默认交付':'Standard delivery'
+});

@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { Readable } from 'node:stream';
 import { test } from 'node:test';
 import { Miniflare } from 'miniflare';
-import { createWallet,fault } from '../commerce/wallet.mjs';
+import { createWallet } from '../commerce/wallet.mjs';
 import { createWarehouse } from '../commerce/warehouse.mjs';
 import { createWarehousePrices } from '../commerce/warehouse-prices.mjs';
 
@@ -41,8 +41,7 @@ test('D1 stock allocation, capture recovery, replay after restart, public shoppe
   let failCapture=true,sends=0;
   const options={wallet:{...wallet,capture:(u,k)=>{if(failCapture){failCapture=false;throw Error('capture unavailable');}wallet.capture(u,k);}},
     mf,db,config:{origin:'https://test.example',bindings:{SETTINGS_ENCRYPTION_KEY:key.toString('base64')}},
-    outlook:{fetch:async req=>{sends++;const body=await req.json();assert.match(body.text,/private inventory fixture/);return Response.json({ok:true,providerId:'test'});}},
-    verifyPin:async (u,p)=>{if(p!=='123456')throw fault(400,'PIN');}};
+    outlook:{fetch:async req=>{sends++;const body=await req.json();assert.match(body.text,/private inventory fixture/);return Response.json({ok:true,providerId:'test'});}}};
   let api=createWarehouse(options);
   const shopper={id:'shopper',email:'shopper@example.org',name:'Shopper',role:'customer'};
   async function request(path,fields,user=shopper) {
@@ -62,10 +61,9 @@ test('D1 stock allocation, capture recovery, replay after restart, public shoppe
   assert.equal(browse.data.batches[0].unitPrice,null);
   assert.equal(browse.data.claims,undefined);
   assert.doesNotMatch(JSON.stringify(browse.data),/encrypted|payload|recipientEmail/i);
-  const order={requestId:randomUUID(),batchId:b,quantity:2,recipientEmail:'deliver@example.org',quotedUnitRaw:30000,pin:'123456'};
+  const order={requestId:randomUUID(),batchId:b,quantity:2,recipientEmail:'deliver@example.org',quotedUnitRaw:30000};
   assert.equal((await post(order)).status,402);
   wallet.credit({userId:'shopper',reference:'manual',amountRaw:95000});
-  assert.equal((await post({...order,pin:'000000'})).status,400);
   assert.equal((await post({...order,quotedUnitRaw:15000})).status,409);
   assert.equal((await post(order)).status,503);
   assert.equal(wallet.snapshot('shopper').heldRaw,60000);
@@ -79,7 +77,7 @@ test('D1 stock allocation, capture recovery, replay after restart, public shoppe
   assert.equal((await d1.prepare("SELECT count(*) AS n FROM warehouse_inventory WHERE status='claimed' AND email_status='accepted'").first()).n,2);
   assert.deepEqual((await request('/api/warehouse?catalog=1')).data,{batches:[],listedCategories:['email'],stats:{available:0,batches:0}});
   const freeBatch=await batch(null,1);
-  const free={...order,requestId:randomUUID(),batchId:freeBatch,quantity:1,quotedUnitRaw:0,pin:''};
+  const free={...order,requestId:randomUUID(),batchId:freeBatch,quantity:1,quotedUnitRaw:0};
   const outcomes=await Promise.all([post(free),post({...free,requestId:randomUUID()})]);
   assert.deepEqual(outcomes.map(r=>r.status).sort(),[200,409]);
   assert.equal(wallet.balance('shopper'),35000);

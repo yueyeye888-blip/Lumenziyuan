@@ -3,7 +3,7 @@ import type { MailAttachment } from "@/lib/mail-delivery";
 
 const escape = (value: string) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
 export function renderSampleAttachment(input: SampleDocumentData) {
-  const lines = ["SAMPLE / NOT VALID", "Lumen 内部测试样张", input.documentType, `编号：${input.requestNo || "SAMPLE"}`, `国家/地区：${input.country}`, `测试姓名：${input.subjectName}`, `测试地址：${input.addressLine}`, `用途：${input.purpose}`, "仅供内部测试，不具备法律效力"];
+  const lines = ["SAMPLE / NOT VALID", "Yorke AI 内部测试样张", input.documentType, `编号：${input.requestNo || "SAMPLE"}`, `国家/地区：${input.country}`, `测试姓名：${input.subjectName}`, `测试地址：${input.addressLine}`, `用途：${input.purpose}`, "仅供内部测试，不具备法律效力"];
   const wrapped = lines.flatMap(line => Array.from(line).reduce<string[]>((rows, c, i) => {
     if (i % 45 === 0) rows.push(""); rows[rows.length - 1] += c; return rows;
   }, []));

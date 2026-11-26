@@ -39,7 +39,7 @@ export async function POST(request: Request) {
     const testResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text: "✅ Lumen 资源申购中心 Telegram 提醒已配置成功。" }),
+      body: JSON.stringify({ chat_id: chatId, text: "✅ Yorke AI 资源申购中心 Telegram 提醒已配置成功。" }),
     });
     if (!testResponse.ok) return Response.json({ error: "Bot 有效，但测试消息发送失败，请确认 Chat ID 及机器人会话权限" }, { status: 400 });
   }

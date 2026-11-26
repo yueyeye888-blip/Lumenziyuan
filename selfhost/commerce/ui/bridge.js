@@ -105,6 +105,11 @@
     else walletNav.removeAttribute('aria-current');
     const legacyWallet = items.find((el) => ['我的钱包', '账户余额'].includes(labelOf(el)));
     if (legacyWallet) legacyWallet.dataset.lumenLegacyWallet = '';
+    if (snapshot?.canManageAccounts && !nav.querySelector('#lumen-refund-link')) {
+      const refunds = link('退款审核', '/__host/refund-review', trigger.className);
+      refunds.id = 'lumen-refund-link';
+      walletNav.after(refunds);
+    }
     if (snapshot?.canManageAccounts && !nav.querySelector('#lumen-employees-link')) {
       const existing = items.find((el) => ['账号与额度', '合伙人与额度'].includes(labelOf(el)));
       if (existing) {
@@ -227,7 +232,6 @@
           window.dispatchEvent(new CustomEvent('lumen:checkout', {
             detail: {
               ids,
-              security: () => options?.openSecurity(),
               accepted() {
                 accepted?.();
                 refreshBalance();
@@ -263,7 +267,7 @@
     window.dispatchEvent(new Event('lumen:market-ready'));
   }
 
-  function paymentPin(priceRaw) {
+  function confirmPayment(priceRaw) {
     const price = amount.format(priceRaw / 10000);
     return new Promise((resolve) => {
       const dialog = document.createElement('dialog');
@@ -277,20 +281,19 @@
           </div>
           <div class="lumen-payment-body">
             <div class="lumen-payment-total"><span>应付金额</span><strong>${price} <small>U</small></strong></div>
-            <p>付款后开始处理。订单失败时，费用会退回账户余额。</p>
-            <label>六位支付密码<input type="password" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" required autocomplete="off"></label>
-            <div class="lumen-payment-links"><a href="/?section=wallet">查看余额</a><a href="/__host/security">设置支付密码</a></div>
+            <p>付款后进入队列。程序异常时，由平台人工复核退款。</p>
+            <div class="lumen-payment-links"><a href="/?section=wallet">查看余额</a></div>
           </div>
           <footer><button class="lumen-wallet-secondary" value="cancel" formnovalidate>取消</button><button class="lumen-wallet-primary" value="ok">确认支付 ${price} U</button></footer>
         </form>`;
       document.body.append(dialog);
       dialog.onclose = () => {
-        const pin = dialog.returnValue === 'ok' ? dialog.querySelector('input').value : null;
+        const confirmed = dialog.returnValue === 'ok';
         dialog.remove();
-        resolve(pin);
+        resolve(confirmed);
       };
       dialog.showModal();
-      dialog.querySelector('input').focus();
+      dialog.querySelector('button[value=cancel]').focus();
     });
   }
   window.lumenSubmitAddress = async function (path, options) {
@@ -304,8 +307,7 @@
     } catch {
       return Response.json({ error: '暂时无法读取售价，请稍后重试。' }, { status: 503 });
     }
-    const pin = await paymentPin(price);
-    if (!pin) return Response.json({ error: '已取消提交。' }, { status: 400 });
+    if (!await confirmPayment(price)) return Response.json({ error: '已取消提交。' }, { status: 400 });
     const fingerprint = Array.from(
       new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(options.body))),
       (x) => x.toString(16).padStart(2, '0'),
@@ -316,7 +318,7 @@
     const res = await fetch(path, {
       ...options,
       headers: { ...options.headers, 'idempotency-key': key },
-      body: JSON.stringify({ ...JSON.parse(options.body), pin, quotedPriceRaw: price }),
+      body: JSON.stringify({ ...JSON.parse(options.body), quotedPriceRaw: price }),
     });
     if (res.ok || (res.status >= 400 && res.status < 500)) sessionStorage.removeItem(name);
     return res;

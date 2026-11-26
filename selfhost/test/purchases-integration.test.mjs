@@ -11,6 +11,7 @@ import { createEsimPurchases } from '../resource-operations/esim-purchases.mjs';
 import { createEsimSupplier } from '../resource-operations/esim-supplier.mjs';
 import { makeResourceOperations } from '../resource-operations/resource-operations.mjs';
 import { openEsimArchives } from '../resource-operations/esim-archives.mjs';
+import { openEsimWatches } from '../resource-operations/esim-watches.mjs';
 import JSZip from '../resource-operations/jszip.cjs';
 
 const origin = 'https://test.example';
@@ -19,12 +20,66 @@ const staff = { id:'staff', email:'staff@test.example' };
 const stranger = { id:'other', email:'other@test.example' };
 const cost = 12_345;
 const price = 2 * cost;
-const cart = (id='LH-'+randomUUID(),items=[{id:'SG_Fixed',priceRaw:price,count:3}]) => ({id,items,pin:'864209'});
+const cart = (id='LH-'+randomUUID(),items=[{id:'SG_Fixed',priceRaw:price,count:3}]) => ({id,items});
 const packageList = [
   {slug:'SG_Fixed',packageCode:'SG123',name:'Singapore Fixed',price:cost,currencyCode:'USD',dataType:1,duration:7},
   {slug:'SG_Daily',packageCode:'SG124',name:'Singapore Daily',price:16_774,currencyCode:'USD',dataType:2,duration:1},
   {slug:'FR_1',packageCode:'FR123',name:'France 1GB',price:13_000,currencyCode:'USD',dataType:1,duration:7},
 ];
+
+test('the watch group is shared for owners and administrators, with whole-batch authorization',async () => {
+  const root = mkdtempSync(path.join(tmpdir(),'lumen-esim-watch-'));
+  mkdirSync(path.join(root,'data'));
+  const customer = {id:'customer',email:'buyer@example.invalid',role:'customer'};
+  const staffCard = 'STAFF_CARD';
+  const customerCard = 'CUSTOMER_CARD';
+  const records = {
+    [admin.id]:[staffCard,customerCard],
+    [staff.id]:[staffCard],
+    [stranger.id]:[],
+  };
+  const alias = 'https://shop.example.invalid';
+  const operations = makeResourceOperations({
+    root,config:{origin,aliasOrigins:[alias],bindings:{RESOURCE_ADMIN_EMAILS:admin.email}},
+    mf:{async dispatchFetch(url,{headers}) {
+      assert.equal(new URL(url).pathname,'/api/esim/overview');
+      return Response.json({history:{items:records[headers.get('oai-authenticated-user-id')].map(esimTranNo=>({esimTranNo})),total:records[headers.get('oai-authenticated-user-id')].length}});
+    }},
+    identities:{list:()=>[]},
+    purchases:{
+      customerProfiles:async user=>({available:true,partial:false,items:user.id===customer.id?[{profile:{esimTranNo:customerCard},override:{}}]:[]}),
+      sync:async()=>{},summary:async()=>{},reconcile:async()=>{},
+    },
+    readBody:async req=>JSON.stringify(req.fields),
+  });
+  async function request(pathname,user,fields,requestOrigin=origin) {
+    let result;
+    const req={method:fields?'POST':'GET',headers:{origin:requestOrigin,'content-type':'application/json'},fields};
+    const res={writeHead(status){ result={status}; },end(body){ result.data=JSON.parse(body); }};
+    assert.ok(await operations.route(req,res,new URL(pathname,origin),user));
+    return result;
+  }
+  const select = (ids,watching=true)=>({ids,watching});
+  try {
+    assert.equal((await request('/api/esim/watch',staff,select([staffCard,customerCard]))).status,403);
+    assert.deepEqual((await request('/api/esim/overview',admin)).data.history.items.map(item=>item.watchedAt),[null,null]);
+    const result = await request('/api/esim/watch',staff,select([staffCard]),alias);
+    assert.equal(result.status,200);
+    assert.equal((await request('/api/esim/overview',admin)).data.history.items[0].watchedAt,result.data.watchedAt);
+    const own = await request('/api/esim/watch',customer,select([customerCard]));
+    assert.equal(own.status,200);
+    const overview = (await request('/api/esim/overview',admin)).data.history.items;
+    assert.deepEqual(overview.map(item=>item.watchedAt),[result.data.watchedAt,own.data.watchedAt]);
+    assert.equal((await request('/api/esim/watch',stranger,select([customerCard],false))).status,403);
+    assert.deepEqual(await request('/api/esim/watch',admin,select([staffCard,customerCard],false)),
+      {status:200,data:{ids:[staffCard,customerCard],watchedAt:null}});
+    assert.equal((await request('/api/esim/overview',staff)).data.history.items[0].watchedAt,null);
+    assert.equal((await request('/api/esim/overview',customer)).data.history.items[0].watchedAt,null);
+  } finally {
+    operations.close();
+    rmSync(root,{recursive:true,force:true});
+  }
+});
 
 test('real D1 tables, supplier payloads, order deduplication, balances and QR access',async () => {
   const { Miniflare } = await import('miniflare');
@@ -125,10 +180,7 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     const orderPath='/api/esim/purchases';
     const quotaPath='/api/esim/purchase-quota';
     const quotePath='/api/esim/purchase-quote';
-    assert.equal((await request(quotePath,staff,{ids:['SG_Fixed']})).data.pinConfigured,false);
-    for (const user of [admin,staff,stranger]) {
-      assert.equal((await request('/api/settings/security',user,{newPin:'864209'})).status,200);
-    }
+    assert.equal((await request(quotePath,staff,{ids:['SG_Fixed']})).data.pinConfigured,undefined);
     assert.equal((await request(quotaPath,staff)).status,403);
     assert.equal((await request(quotaPath,admin,{email:staff.email,amount:'20',expectedRaw:0})).status,410);
     assert.equal((await request(quotePath,staff,{ids:['SG_Fixed']})).data.availableRaw,200_000);
@@ -194,12 +246,8 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     assert.equal((await request(orderPath,staff,cart())).status,409);
     assert.equal(submitted.length,4);
     assert.equal((await request(quotaPath,admin,{email:staff.email,amount:'1',expectedRaw:125_930})).status,410);
-    for (let attempt=0;attempt<5;attempt++) {
-      assert.equal((await request('/api/settings/security',stranger,{currentPin:'000000',newPin:'111111'})).status,attempt===4?429:400);
-    }
-    assert.equal((await request('/api/settings/security',stranger,{currentPin:'864209',newPin:'111111'})).status,429);
     assert.equal((await request(orderPath,admin)).data.orders.length,4);
-    const retryFields = {id:uncertain.data.order.id,pin:'864209',retry:true};
+    const retryFields = {id:uncertain.data.order.id,retry:true};
     assert.equal((await request(orderPath,staff,retryFields)).status,429);
     assert.equal((await request(orderPath,admin,retryFields)).status,404);
     await db.prepare('UPDATE esim_purchase_orders SET updated_at=? WHERE id=?').bind(new Date(Date.now()-31_000).toISOString(),retryFields.id).run();
@@ -217,12 +265,11 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     const legacyLines=[{id:'SG_Fixed',code:'SG_Fixed',packageCode:'SG123',name:'Singapore Fixed',priceRaw:cost,count:1}];
     await db.prepare(`INSERT INTO esim_purchase_orders(id,user_id,user_email,user_name,status,staff,amount,lines,created_at,updated_at)
       VALUES(?,?,?,?,'uncertain',1,?,?,?,?)`).bind(legacyId,staff.id,staff.email,'Test employee',cost,JSON.stringify(legacyLines),oldTime,oldTime).run();
-    assert.equal((await request(orderPath,staff,{id:legacyId,pin:'864209',retry:true})).data.order.status,'allocating');
+    assert.equal((await request(orderPath,staff,{id:legacyId,retry:true})).data.order.status,'allocating');
     assert.equal(submitted.at(-1).amount,cost);
     assert.equal((await api.summary(staff)).availableRaw,51_860);
     assert.equal((await db.prepare('SELECT amount FROM quota_transactions WHERE id=?').bind(legacyId).first()).amount,-cost);
 
-    await request('/api/settings/security',customer,{newPin:'864209'});
     funds.credit({userId:customer.id,amountRaw:80_000,reference:'deposit:public',note:'Confirmed deposit'});
     const selfService = await request(orderPath,customer,cart(undefined,[{id:'FR_1',priceRaw:26_000,count:1}]));
     assert.equal(selfService.status,202);
@@ -266,6 +313,34 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     assert.equal(visibleArchive.items[0].archivedAt,archived.data.archivedAt);
     assert.equal(visibleArchive.items[0].availabilityStatus,'temporary_unavailable');
     assert.deepEqual((await request(overviewPath,otherBuyer)).data.history.items,[]);
+    const watchPath = '/api/esim/watch';
+    const watchSelection = {ids:[resourceId],watching:true};
+    assert.equal(visibleArchive.items[0].watchedAt,null);
+    assert.equal((await request(watchPath,customer)).status,405);
+    assert.equal((await request(watchPath,customer,watchSelection,'https://other.example')).status,403);
+    assert.equal((await request(watchPath,customer,{...watchSelection,watching:'true'})).status,400);
+    assert.equal((await request(watchPath,customer,{...watchSelection,ids:[]})).status,400);
+    assert.equal((await request(watchPath,otherBuyer,watchSelection)).status,403);
+    assert.equal((await request(watchPath,customer,{...watchSelection,ids:[resourceId,owned[0].resource_id]})).status,403);
+    assert.equal((await request(overviewPath,customer)).data.history.items[0].watchedAt,null);
+    const watched = await request(watchPath,customer,watchSelection);
+    assert.equal(watched.status,200,JSON.stringify(watched.data));
+    assert.deepEqual(watched.data.ids,[resourceId]);
+    assert.match(watched.data.watchedAt,/^\d{4}-\d{2}-\d{2}T.*Z$/);
+    const watchItem = (await request(overviewPath,customer)).data.history.items[0];
+    assert.equal(watchItem.watchedAt,watched.data.watchedAt);
+    assert.equal(watchItem.archivedAt,archived.data.archivedAt);
+    assert.deepEqual((await request(overviewPath,otherBuyer)).data.history.items,[]);
+    assert.equal((await request(watchPath,otherBuyer,{...watchSelection,watching:false})).status,403);
+    const reopenedWatches = openEsimWatches(mailRoot);
+    try {
+      assert.equal(reopenedWatches.list().size,1);
+      assert.equal(reopenedWatches.list().get(resourceId),watched.data.watchedAt);
+      assert.equal(reopenedWatches.has(resourceId),true);
+      assert.equal(reopenedWatches.has(owned[0].resource_id),false);
+    } finally {
+      reopenedWatches.close();
+    }
     const reopenedArchives = openEsimArchives(mailRoot);
     try {
       assert.equal(reopenedArchives.list(customer.id).get(resourceId),archived.data.archivedAt);
@@ -291,7 +366,12 @@ test('real D1 tables, supplier payloads, order deduplication, balances and QR ac
     assert.equal(sentWorkbooks.length,1);
     assert.deepEqual(await request(archivePath,customer,{ids:[resourceId],archived:false}),
       {status:200,data:{ids:[resourceId],archivedAt:null}});
-    assert.equal((await request(overviewPath,customer)).data.history.items[0].archivedAt,null);
+    const restoredItem = (await request(overviewPath,customer)).data.history.items[0];
+    assert.equal(restoredItem.archivedAt,null);
+    assert.equal(restoredItem.watchedAt,watched.data.watchedAt);
+    assert.deepEqual(await request(watchPath,customer,{ids:[resourceId],watching:false}),
+      {status:200,data:{ids:[resourceId],watchedAt:null}});
+    assert.equal((await request(overviewPath,customer)).data.history.items[0].watchedAt,null);
     // Simulate a process exit after the balance hold and before a vendor request;
     // an accepted order with an interrupted local settlement must be replayed once.
     const beforeRestart=funds.balance(customer.id);

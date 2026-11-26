@@ -12,11 +12,15 @@ export function worker(root, config, mail = createOutlookMail(root, config)) {
   }
   const modules = collect(base);
   modules.sort((a, b) => Number(b.path === path.join(base, 'index.js')) - Number(a.path === path.join(base, 'index.js')));
+  const referenceFile = path.join(root, 'data', 'supplier-template-introductions.json');
+  let reference;
+  try { reference = JSON.parse(readFileSync(referenceFile,'utf8')); }
+  catch (error) { if (error.code !== 'ENOENT') console.warn('Template introduction cache unavailable'); }
   return new Miniflare({
     name: 'lumen-resource-hub', host: '127.0.0.1', port: 0,
     compatibilityDate: '2026-05-15', compatibilityFlags: ['nodejs_compat'],
     modulesRoot: base, modules, cf: false,
-    bindings: { ...(config.bindings || {}), SELFHOST_WALLET_REQUIRED: '1' }, d1Databases: ['DB'],
+    bindings: { ...(config.bindings || {}), SELFHOST_WALLET_REQUIRED: '1', ...(reference ? {SUPPLIER_INTRODUCTION_CACHE: reference} : {}) }, d1Databases: ['DB'],
     ...(mail ? { serviceBindings: { MAIL_DELIVERY: mail.fetch } } : {}),
     d1Persist: path.join(root, 'data', 'd1'),
     log: new Log(LogLevel.ERROR),

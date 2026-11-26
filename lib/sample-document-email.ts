@@ -41,11 +41,11 @@ export async function sendSampleDocumentEmail(input: SampleDocumentEmailInput) {
   const email = {
       from: env.DELIVERY_EMAIL_FROM,
       to: [input.recipientEmail],
-      subject: `[SAMPLE / NOT VALID] Lumen 测试文件 · ${input.requestNo}`,
-      text: `Lumen 内部测试文件\nSAMPLE / NOT VALID / 仅供测试\n\n申请编号：${input.requestNo}\n测试类型：${input.documentType}\n国家/地区：${input.country}\n测试姓名：${input.subjectName}\n测试地址：${input.addressLine}\n用途：${input.purpose}\n\n在线查看与打印：${input.previewUrl}\n\n${notice}`,
+      subject: `[SAMPLE / NOT VALID] Yorke AI 测试文件 · ${input.requestNo}`,
+      text: `Yorke AI 内部测试文件\nSAMPLE / NOT VALID / 仅供测试\n\n申请编号：${input.requestNo}\n测试类型：${input.documentType}\n国家/地区：${input.country}\n测试姓名：${input.subjectName}\n测试地址：${input.addressLine}\n用途：${input.purpose}\n\n在线查看与打印：${input.previewUrl}\n\n${notice}`,
       html: `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#172033">
         <div style="padding:22px;border-radius:18px;background:#172a52;color:#fff">
-          <div style="font-size:12px;letter-spacing:.18em;color:#b9c9ec">LUMEN INTERNAL QA</div>
+          <div style="font-size:12px;letter-spacing:.18em;color:#b9c9ec">Yorke AI INTERNAL QA</div>
           <h2 style="margin:10px 0 0">测试文件生成结果</h2>
         </div>
         <div style="margin:18px 0;padding:18px;border:2px solid #d65353;border-radius:14px;background:#fff5f5;text-align:center;color:#a12c2c">

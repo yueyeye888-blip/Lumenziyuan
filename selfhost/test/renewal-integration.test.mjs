@@ -12,7 +12,7 @@ const admin={id:'admin',email:'admin@test.example'};
 const staff={id:'staff',email:'staff@test.example'};
 const outsider={id:'outsider',email:'outsider@test.example'};
 
-test('manual top-up honors ownership, live base match, PIN, quota and the supplier receipt',async () => {
+test('manual top-up honors ownership, live base match, quota and the supplier receipt',async () => {
   const {Miniflare}=await import('miniflare');
   const mf=new Miniflare({modules:true,script:'export default {fetch(){return new Response("OK")}}',d1Databases:['DB']});
   const db=await mf.getD1Database('DB');
@@ -78,17 +78,15 @@ test('manual top-up honors ownership, live base match, PIN, quota and the suppli
     await api.ready();
     const quotePath='/api/esim/renewal-quote';
     const renewPath='/api/esim/renewals';
-    assert.equal((await request('/api/settings/security',staff,{newPin:'654321'})).status,200);
     assert.equal((await request('/api/esim/purchase-quota',admin,{email:staff.email,amount:'15',expectedRaw:0})).status,410);
     assert.equal((await request(quotePath,outsider,{ids:['CARD_A']})).status,403);
     const {data:quote}=await request(quotePath,staff,{ids:['CARD_A','CARD_B','CARD_C']});
     assert.deepEqual(quote.cards.map(card=>card.options.map(offer=>offer.code)),[['TOPUP_AA01'],['TOPUP_BB01'],[]]);
     assert.match(quote.cards[2].reason,/到期/);
     assert.ok(quote.cards.every(card=>!card.iccid));
-    assert.equal((await request(renewPath,staff,{id:quote.id,pin:'000000'})).status,400);
-    assert.equal((await request(renewPath,staff,{id:quote.id,pin:'654321'},'https://other.example')).status,403);
+    assert.equal((await request(renewPath,staff,{id:quote.id},'https://other.example')).status,403);
     assert.equal(calls.length,0);
-    const start=await Promise.all([request(renewPath,staff,{id:quote.id,pin:'654321'}),request(renewPath,staff,{id:quote.id,pin:'654321'})]);
+    const start=await Promise.all([request(renewPath,staff,{id:quote.id}),request(renewPath,staff,{id:quote.id})]);
     assert.ok(start.every(reply=>reply.status===202 && reply.data.records.length===2));
     async function settled(id,user=staff) {
       for(let n=0;n<60;n++) {
@@ -109,13 +107,13 @@ test('manual top-up honors ownership, live base match, PIN, quota and the suppli
     assert.equal((await request(renewPath,admin)).data.records.length,2);
     const rejectedQuote=(await request(quotePath,staff,{ids:['CARD_A']})).data;
     fail='price';
-    assert.equal((await request(renewPath,staff,{id:rejectedQuote.id,pin:'654321',code:'NOT_QUOTED'})).status,400);
-    await request(renewPath,staff,{id:rejectedQuote.id,pin:'654321',code:'TOPUP_AA01'});
+    assert.equal((await request(renewPath,staff,{id:rejectedQuote.id,code:'NOT_QUOTED'})).status,400);
+    await request(renewPath,staff,{id:rejectedQuote.id,code:'TOPUP_AA01'});
     assert.equal((await settled(rejectedQuote.id))[0].status,'rejected');
     assert.equal((await api.summary(staff)).availableRaw,75200);
     const unknownQuote=(await request(quotePath,staff,{ids:['CARD_A']})).data;
     fail='timeout';
-    await request(renewPath,staff,{id:unknownQuote.id,pin:'654321',code:'TOPUP_AA01'});
+    await request(renewPath,staff,{id:unknownQuote.id,code:'TOPUP_AA01'});
     assert.equal((await settled(unknownQuote.id))[0].status,'uncertain');
     assert.equal((await api.summary(staff)).availableRaw,44400);
     const again=(await request(quotePath,staff,{ids:['CARD_A']})).data;
@@ -131,8 +129,7 @@ test('manual top-up honors ownership, live base match, PIN, quota and the suppli
     assert.equal(directQuote.paymentSource,'supplier');
     assert.equal(directQuote.supplierBalanceRaw,wallet);
     assert.equal(directQuote.cards[0].options[0].priceRaw,22_000);
-    assert.equal((await request('/api/settings/security',admin,{newPin:'654321'})).status,200);
-    assert.equal((await request(renewPath,admin,{id:directQuote.id,pin:'654321',code:'TOPUP_BB01'})).status,202);
+    assert.equal((await request(renewPath,admin,{id:directQuote.id,code:'TOPUP_BB01'})).status,202);
     const [directRenewal]=await settled(directQuote.id,admin);
     assert.equal(directRenewal.status,'succeeded');
     assert.equal(directRenewal.amountRaw,22_000);
@@ -146,7 +143,7 @@ test('manual top-up honors ownership, live base match, PIN, quota and the suppli
     assert.equal(agentQuote.paymentSource,'wallet');
     assert.equal(agentQuote.cards[0].options[0].priceRaw,35_200);
     staff.discountBps=7000;
-    assert.equal((await request(renewPath,staff,{id:agentQuote.id,pin:'654321',code:'TOPUP_BB01'})).status,409);
+    assert.equal((await request(renewPath,staff,{id:agentQuote.id,code:'TOPUP_BB01'})).status,409);
     assert.equal(calls.length,5);
   } finally { await mf.dispose(); funds.close(); }
 });

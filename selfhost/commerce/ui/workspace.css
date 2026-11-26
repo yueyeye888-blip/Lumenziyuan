@@ -1,0 +1,105 @@
+/* Refund review: master list and financial decision pane. */
+.review-console {background:#f3f5f4;color:#152a2b;font-family:Inter,system-ui,sans-serif}
+.review-console main {width:min(calc(100% - 48px),1240px);margin:auto;padding:24px 0 80px}
+.review-crumb {display:flex;align-items:center;gap:12px;font-size:13px;color:#637374;margin-bottom:20px}
+.review-crumb a {font-weight:750;color:#183c36;text-decoration:none}
+.review-banner {display:flex;align-items:center;justify-content:space-between;gap:30px;padding:34px 38px;border-radius:16px;background:linear-gradient(115deg,#102b2b,#153f38 64%,#20604e);color:white}
+.review-console .review-banner h1 {font-size:clamp(29px,3vw,42px);font-weight:650;line-height:1.15;letter-spacing:-.04em}
+.review-banner p {color:#c6dbd3;margin:12px 0 0;font-size:14px;line-height:1.6;max-width:560px}
+.review-banner dl,.case-detail dl {display:flex;gap:28px;margin:0}
+.review-banner dl>div {padding-left:22px;border-left:1px solid #ffffff38}
+.review-banner dt {color:#c6dbd3;font-size:12px}
+.review-banner dd {font-size:28px;margin:6px 0 0;white-space:nowrap;font-variant-numeric:tabular-nums}
+.review-banner small,.case-detail small {display:inline;font-size:.6em;color:inherit}
+.review-desk {margin-top:22px;display:grid;grid-template-columns:minmax(340px, .96fr) minmax(380px,1.24fr);gap:18px;align-items:start}
+.review-console main section:is(.review-queue,.case-detail) {margin:0;border:1px solid #d8e0dc;border-radius:13px;background:#fff;box-shadow:0 3px 12px #132d2810}
+.review-console main section.review-queue {padding:0;overflow:hidden}
+.review-tabs {display:flex;gap:18px;padding:0 20px;border-bottom:1px solid #dce4df}
+.review-tabs a {display:flex;gap:8px;align-items:center;padding:16px 0;color:#657673;text-decoration:none;border-bottom:2px solid transparent;font-size:14px}
+.review-tabs a[aria-current] {color:#006453;border-color:#167562;font-weight:750}
+.review-tabs b {border-radius:20px;padding:1px 6px;background:#edf2ef;font-size:11px}
+.review-queue ul {margin:0;padding:0;list-style:none}
+.review-queue li+li {border-top:1px solid #e6ece8}
+.review-queue li a {display:grid;grid-template-columns:1fr auto;align-items:center;gap:7px 10px;padding:15px 18px;text-decoration:none;color:#213632;border-left:3px solid transparent}
+.review-queue li a[aria-current] {border-color:#167562;background:#edf7f2}
+.review-queue li strong {font:650 13px/1.45 'IBM Plex Mono',ui-monospace,monospace;overflow-wrap:anywhere}
+.review-queue li b {text-align:right;font-size:14px}
+.review-queue li time {color:#627570;font-size:12px}
+.review-status {display:inline-flex;align-items:center;justify-self:end;gap:6px;width:max-content;padding:3px 8px;border-radius:15px;background:#edf1f4;color:#465660;font:650 12px/1.5 system-ui}
+.review-status::before {content:'';width:6px;height:6px;border-radius:50%;background:currentColor}
+.review-status[data-state=pending] {color:#8b5306;background:#fff2d8}
+.review-status[data-state=approved],.review-status[data-state=delivered] {background:#dff3e9;color:#126044}
+.review-queue .queue-empty {padding:38px 22px;color:#647671}
+.review-pages:not(:empty) {padding:12px 20px;display:flex;gap:12px}
+.review-desk:has(.queue-empty) {grid-template-columns:1fr}
+.review-console main section.case-detail {padding:26px;scroll-margin-top:65px}
+.case-title h2 {margin:12px 0 20px;font:650 clamp(16px,2vw,23px)/1.45 'IBM Plex Mono',ui-monospace,monospace;overflow-wrap:anywhere}
+.case-detail dl {padding:16px 0;border-block:1px solid #e0e7e3;flex-wrap:wrap}
+.case-detail dt,.case-detail h3 {font-size:12px;font-weight:650;color:#526760}
+.case-detail dd {margin:5px 0 0;font-size:16px;font-variant-numeric:tabular-nums}
+.case-detail h3 {margin:20px 0 7px}
+.case-detail .case-note {font-size:14px;line-height:1.65;color:#273c35;margin:0 0 16px}
+.case-detail form {border-top:1px solid #e0e7e3;padding-top:18px}
+.case-detail textarea {min-height:80px;border-color:#ccd8d0}
+.case-detail form button[value=approved] {background:#17664f;border-color:#17664f}
+.esim-row-archive {padding:6px 10px;border:1px solid #cbd8d4;border-radius:7px;color:#286656;font-size:11px;white-space:nowrap}
+.esim-row-archive:disabled {opacity:.5}
+@media(max-width:820px){.review-desk{grid-template-columns:1fr}.review-banner{align-items:start;flex-direction:column;padding:24px}.review-banner dl>div:first-child{border:0;padding:0}.review-console main{width:min(calc(100% - 24px),680px)}.review-console .case-detail{padding:18px}}
+
+/* Address form and catalogue retain their original inputs, focus and action handlers. */
+[data-catalog-view] {background:#f5f6f3;min-height:85vh}
+[data-catalog-view] h1 {font-family:Inter,system-ui,sans-serif;font-size:clamp(25px,2.5vw,38px);letter-spacing:-.045em;line-height:1.16}
+[data-catalog-view] .catalog-workspace {min-width:0}
+[data-catalog-view] .catalog-workspace>.scroll-mt-24 {min-width:0}
+[data-catalog-view] .scroll-mt-24>.grid {display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,205px),1fr));gap:14px}
+[data-catalog-view] .scroll-mt-24 article {display:flex;flex-direction:column;border-radius:12px}
+[data-catalog-view] article>div:last-child {display:flex;flex-direction:column;flex:1}
+[data-catalog-view] article>div:last-child>button:last-child {margin-top:auto}
+[data-catalog-view=library] .catalog-workspace>.scroll-mt-24>div:first-child {padding:14px;background:white;border:1px solid #dce3dc;border-radius:12px}
+[data-catalog-view=library] article {border:1px solid #d7dfd6;background:#fff;box-shadow:0 2px 4px #20372d09}
+[data-catalog-view=library] article:hover {border-color:#78a48d;box-shadow:0 8px 18px #23362b12}
+[data-catalog-view=library] article>button:first-child {background:#eef0e9;border-bottom:1px solid #d7dfd6}
+[data-catalog-view=library] article>div:last-child>button:last-child {background:#214c40;color:#fff;border-radius:7px}
+[data-catalog-view=studio] {color-scheme:light;color:#192d50;background:#f5f7fb}
+[data-catalog-view=studio] .catalog-workspace {display:grid;grid-template-columns:minmax(320px,.84fr) minmax(0,1.65fr);gap:20px;align-items:start}
+[data-catalog-view=studio] .studio-editor {min-width:0}
+[data-catalog-view=studio] .studio-editor>section,
+[data-catalog-view=studio] .studio-editor>form,
+[data-catalog-view=studio] .scroll-mt-24 article {background:#fff;border-color:#dce4ef;box-shadow:0 2px 7px #162e5210}
+[data-catalog-view=studio] .studio-editor>section>div {display:flex;flex-direction:row;align-items:center;padding:14px;gap:12px}
+[data-catalog-view=studio] .studio-editor>section>div>:first-child {width:70px;height:84px}
+[data-catalog-view=studio] .studio-editor>section>div>div:last-child>p:last-child {display:none}
+[data-catalog-view=studio] .studio-editor>section h2 {font-size:15px}
+[data-catalog-view=studio] .studio-editor form {padding:16px}
+[data-catalog-view=studio] .studio-editor form .grid {grid-template-columns:minmax(0,1fr)}
+[data-catalog-view=studio] :is(input,select,textarea) {max-width:100%}
+[data-catalog-view=studio] :is(input,select,textarea):focus-visible {outline:2px solid #4771ba;outline-offset:1px}
+[data-catalog-view=studio] .scroll-mt-24 article:has(button[aria-pressed=true]) {border-color:#597eb9}
+[data-catalog-view=studio] .scroll-mt-24 article button[aria-pressed=true],
+[data-catalog-view=studio] .studio-editor form [role=group] button[aria-pressed=true] {background:#e9f0fc;border-color:#a3badd;color:#244c87}
+[data-catalog-view=studio] .studio-editor form button[type=submit] {background:#2754a7;color:white}
+@media(max-width:980px){[data-catalog-view=studio] .catalog-workspace{grid-template-columns:minmax(255px,.9fr) minmax(0,1fr);gap:12px}}
+@media(max-width:720px){[data-catalog-view=studio] .catalog-workspace{grid-template-columns:1fr}[data-catalog-view] .scroll-mt-24>.grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,155px),1fr))}}
+body:has([data-workbench-role]) {padding-top:0}
+[data-workbench-role]>main>header:has(input) {padding-right:clamp(145px,12vw,185px)}
+@media(max-width:650px){[data-workbench-role]>main>header:has(input){padding-right:140px}.lumen-locale-picker{right:8px}}
+
+body:has([data-workbench-role]) .lumen-locale-picker {top:22px}
+@media(max-width:650px){[data-workbench-role]>main>header:has(input){gap:5px;padding-left:8px}[data-workbench-role]>main>header>div:has(>input){min-width:0}}
+
+.template-preview-switch {display:flex;gap:20px;padding:0 20px;border-bottom:1px solid #dce4ef}
+.template-preview-switch button {color:#526680;font-size:14px;padding:10px 2px;border-bottom:2px solid transparent}
+.template-preview-switch button[aria-pressed=true] {color:#224e93;border-color:#315d9d;font-weight:650}
+[data-catalog-view] [role=dialog] button[hidden] {display:none}
+[data-catalog-view] .template-introduction {display:block;flex:1;min-height:0;overflow:auto;padding:clamp(16px,3vw,34px);background:#fff;color:#243952}
+.template-introduction h3 {font-size:21px;font-weight:650}
+.template-introduction h4 {margin:20px 0 8px;font-size:15px;font-weight:650}
+.template-introduction p,.template-introduction dd,.template-introduction li {white-space:pre-line;overflow-wrap:anywhere;font-size:14px;line-height:1.75}
+.template-introduction .intro-summary {margin:12px 0;max-width:90ch}
+.template-introduction dl {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:8px}
+.template-introduction dl div {background:#f8fafd;border:1px solid #e0e7f1;border-radius:8px;padding:10px 14px}
+.template-introduction dt,.template-introduction small {color:#546780;font-size:12px}
+.template-introduction ul {list-style:disc;padding-left:21px}
+.template-introduction small {display:block;margin-top:20px}
+.template-introduction button {margin-left:12px;text-decoration:underline;color:#24539a}
+[data-catalog-view] .fixed:has(>section[aria-modal=true]) {z-index:1250}

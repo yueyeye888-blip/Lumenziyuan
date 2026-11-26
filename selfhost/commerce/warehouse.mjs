@@ -26,7 +26,7 @@ async function body(req) {
   try {return JSON.parse(Buffer.concat(chunks));} catch {throw fault(400,'认领资料格式无效。');}
 }
 
-export function createWarehouse({wallet,db,mf,config,outlook,verifyPin,fetchImpl=fetch,now=Date.now}) {
+export function createWarehouse({wallet,db,mf,config,outlook,fetchImpl=fetch,now=Date.now}) {
   const price=createWarehousePrices({fetchImpl,now});
   const active=new Map();
   const origins=new Set([config.origin,...(config.aliasOrigins||[])]);
@@ -65,8 +65,6 @@ export function createWarehouse({wallet,db,mf,config,outlook,verifyPin,fetchImpl
     const total=retailUnitRaw*fields.quantity;
     if (retailUnitRaw!==fields.quotedUnitRaw || !Number.isSafeInteger(total)) throw fault(409,'售价已变更，请刷新库存并核对总额。');
     if (total>0) {
-      if (!verifyPin) throw fault(503,'支付密码服务暂不可用。');
-      await verifyPin(user,fields.pin);
     }
     wallet.atomic(()=>{
       if (get(id)) return;
@@ -121,7 +119,7 @@ export function createWarehouse({wallet,db,mf,config,outlook,verifyPin,fetchImpl
       const value=await webcrypto.subtle.decrypt({ name:'AES-GCM',iv:Buffer.from(r.iv,'base64') },decryptKey,Buffer.from(r.encrypted_value,'base64'));
       return `${i+1}. ${r.product_name} · ${r.supplier}${r.country?' · '+r.country:''}\n${new TextDecoder().decode(value)}`;
     }));
-    const mail={to:o.recipient,subject:`Lumen 资源交付 · ${o.quantity} 项资源`,text:lines.join('\n\n')};
+    const mail={to:o.recipient,subject:`Yorke AI 资源交付 · ${o.quantity} 项资源`,text:lines.join('\n\n')};
     const key='lumen-warehouse/'+createHash('sha256').update(o.id).digest('hex');
     db.prepare("UPDATE stock_orders SET email_status='sending' WHERE id=?").run(o.id);
     let state='unknown',error='邮件发送结果尚未确认，请核对收件箱和垃圾邮箱。',provider=null;

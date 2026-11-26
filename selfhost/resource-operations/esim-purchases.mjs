@@ -1,5 +1,4 @@
-import { pbkdf2, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { promisify } from 'node:util';
+import { randomUUID } from 'node:crypto';
 import { createEsimSupplier, SupplierError } from './esim-supplier.mjs';
 import { createEsimRenewals, renewalSchema } from './esim-renewals.mjs';
 
@@ -7,12 +6,10 @@ import { canManageAccounts } from './account-access.mjs';
 import { esimPrice } from '../commerce/pricing.mjs';
 import { paymentSchema, paymentIntent, getPayment, settlePayment, recoverPayments, settlePendingPayments, supplierAvailable } from './esim-commerce.mjs';
 
-const derive = promisify(pbkdf2);
 const supplierName = 'eSIMAccess';
 const maximumCards = 30;
 const validId = /^[a-zA-Z0-9_-]{1,100}$/;
 const validRequestId = /^LH-[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const validPin = pin => typeof pin === 'string' && /^\d{6}$/.test(pin);
 const now = () => new Date().toISOString();
 const definiteFailures = {
   '000101':'供应商拒绝了接口鉴权，请联系管理员。',
@@ -46,8 +43,8 @@ function onlyIds(ids) {
   return ids;
 }
 function orderInput(fields) {
-  check(typeof fields?.id === 'string' && validRequestId.test(fields.id) && validPin(fields.pin),
-    400, '请填写 6 位支付密码并核对订单。');
+  check(typeof fields?.id === 'string' && validRequestId.test(fields.id),
+    400, '请核对订单编号。');
   check(Array.isArray(fields.items), 400, '请选择套餐。');
   onlyIds(fields.items.map(item => item?.id));
   check(fields.items.every(item => Number.isSafeInteger(item.count) && item.count >= 1 &&
@@ -130,7 +127,7 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
     let groupedItems = [];
     if (!isAdmin(user) && user.role !== 'customer') {
       // Group membership tags the acquired card for staff reporting. Funds and the
-      // payment PIN authorize the transaction independently of the catalog grouping.
+      // account balance determine the transaction independently of the catalog grouping.
       const slots = ids.map(() => '?').join(',');
       const codes = ids.map(id => byId.get(id)?.packageCode || '');
       const { results } = await db.prepare(`SELECT i.product_id,i.package_code,i.group_id FROM resource_group_items i
@@ -150,40 +147,6 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
     });
   }
 
-  async function verifyPaymentPin(db, user, pin, security) {
-    check(security, 409, '请先在账户设置中设定 6 位支付密码。');
-    check(!(Date.parse(security.locked_until) > Date.now()), 429, '支付密码已锁定，请 15 分钟后再试。');
-    const attempts = security.locked_until ? 0 : security.failed_attempts;
-    const expected = Buffer.from(security.pin_hash, 'base64');
-    const actual = await derive(pin, Buffer.from(security.pin_salt,'base64'), 210_000, 32, 'sha256');
-    if (expected.length !== actual.length || !timingSafeEqual(expected,actual)) {
-      const lockedUntil = attempts + 1 >= 5 ? new Date(Date.now() + 15 * 60_000).toISOString() : null;
-      await db.prepare('UPDATE user_security SET failed_attempts=?,locked_until=? WHERE user_id=?').bind(attempts+1,lockedUntil,user.id).run();
-      throw new PurchaseError(lockedUntil ? 429 : 400, lockedUntil ? '支付密码已锁定，请 15 分钟后再试。' : '支付密码不正确。');
-    }
-    if (security.failed_attempts || security.locked_until) {
-      await db.prepare('UPDATE user_security SET failed_attempts=0,locked_until=NULL WHERE user_id=?').bind(user.id).run();
-    }
-  }
-  const readSecurity = (db,user) => db.prepare('SELECT * FROM user_security WHERE user_id=?').bind(user.id).first();
-  async function updateSecurity(db, user, fields) {
-    return serialize(async () => {
-      check(validPin(fields?.newPin),400,'支付密码必须是 6 位数字。');
-      const security = await readSecurity(db,user);
-      if (security) {
-        check(validPin(fields.currentPin),400,'请输入当前 6 位支付密码。');
-        await verifyPaymentPin(db,user,fields.currentPin,security);
-      }
-      const salt = randomBytes(16);
-      const hash = await derive(fields.newPin, salt, 210_000, 32, 'sha256');
-      const updatedAt = now();
-      await db.prepare(`INSERT INTO user_security(user_id,pin_hash,pin_salt,updated_at) VALUES(?,?,?,?)
-        ON CONFLICT(user_id) DO UPDATE SET pin_hash=excluded.pin_hash,pin_salt=excluded.pin_salt,
-        failed_attempts=0,locked_until=NULL,updated_at=excluded.updated_at`).bind(user.id,hash.toString('base64'),salt.toString('base64'),updatedAt).run();
-      return { configured:true, updatedAt };
-    });
-  }
-
   const getOrder = (db,id) => db.prepare('SELECT * FROM esim_purchase_orders WHERE id=?').bind(id).first();
   function present(row) {
     const adminView = { account:row.user_email, name:row.user_name };
@@ -197,10 +160,10 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
   async function quote(db,user,ids) {
     const pending = await unresolved(db,user);
     if (pending) return { pending:{ ...present(pending), canRetry:true } };
-    const [catalog, rawBalance, security] = await Promise.all([supplier.catalog(), refreshBalance(),readSecurity(db,user)]);
+    const [catalog, rawBalance] = await Promise.all([supplier.catalog(), refreshBalance()]);
     return {
       lines:(await packageLines(db,user,onlyIds(ids),catalog)).map(({ id, name, priceRaw, periodNum }) => ({ id,name,priceRaw,periodNum })),
-      ...await quoteBalance(db,user,rawBalance), pinConfigured:Boolean(security),
+      ...await quoteBalance(db,user,rawBalance),
       maxCards:maximumCards, currency:'USD',
     };
   }
@@ -219,7 +182,7 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
   }
 
   async function submit(db,user,fields) {
-    const { id, items, pin } = orderInput(fields);
+    const { id, items } = orderInput(fields);
     return serialize(async () => {
       const existing = await getOrder(db,id);
       if (existing) {
@@ -228,7 +191,6 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
         return present(existing);
       }
       check(!await unresolved(db,user),409,'有一笔订单正在核对，请先查看购买记录。');
-      await verifyPaymentPin(db,user,pin,await readSecurity(db,user));
       const [catalog, balance] = await Promise.all([supplier.catalog(), refreshBalance()]);
       const lines = (await packageLines(db,user,items.map(item => item.id),catalog)).map((line,index) => {
         const { priceRaw, count } = items[index];
@@ -282,13 +244,12 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
   }
 
   async function retryOrder(db,user,fields) {
-    check(typeof fields.id === 'string' && validRequestId.test(fields.id) && validPin(fields.pin),400,'请填写 6 位支付密码。');
+    check(typeof fields.id === 'string' && validRequestId.test(fields.id),400,'订单编号无效。');
     return serialize(async () => {
       const row = await getOrder(db,fields.id);
       check(row?.user_id === user.id,404,'订单未找到。');
       if (!['submitting','uncertain'].includes(row.status)) return present(row);
       check(Date.now() - Date.parse(row.updated_at) >= 30_000,429,'请等待 30 秒后再尝试核对该单。');
-      await verifyPaymentPin(db,user,fields.pin,await readSecurity(db,user));
       const lines = JSON.parse(row.lines);
       const current = await packageLines(db,user,lines.map(line=>line.id),await supplier.catalog());
       check(current.every((line,index)=>line.code===lines[index].code && line.costRaw===(lines[index].costRaw ?? lines[index].priceRaw) &&
@@ -419,13 +380,12 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
     return customerLookups.get(user.id);
   }
 
-  const renewals = createEsimRenewals({ supplier,dbReady,serialize,isAdmin,availability,wallet,check,readSecurity,verifyPaymentPin,
-    validPin,definiteFailures,supplierName, usesSupplier, priceFor, quoteBalance, refreshBalance, invalidateBalance });
+  const renewals = createEsimRenewals({ supplier,dbReady,serialize,isAdmin,availability,wallet,check,
+    definiteFailures,supplierName, usesSupplier, priceFor, quoteBalance, refreshBalance, invalidateBalance });
   const renewalPaths = new Set(['/api/esim/renewal-quote','/api/esim/renewals']);
   const paths = new Set(['/api/esim/purchase-quote','/api/esim/purchases','/api/esim/purchase-quota','/api/esim/purchase-cards',...renewalPaths]);
   async function route(req,res,url,user) {
-    const security = url.pathname === '/api/settings/security' && req.method === 'POST';
-    if (!security && !paths.has(url.pathname)) return false;
+    if (!paths.has(url.pathname)) return false;
     const respond = (status,body) => {
       res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'private, no-store'});
       res.end(JSON.stringify(body));
@@ -452,7 +412,6 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
             respond(202,await renewals.submit(user,fields));
         }
         const db = await dbReady();
-        if (security) return respond(200,await updateSecurity(db,user,fields));
         if (url.pathname.endsWith('purchase-quote')) return respond(200,await quote(db,user,onlyIds(fields?.ids)));
         const order = fields?.retry === true ? await retryOrder(db,user,fields) : await submit(db,user,fields);
         return respond(order.status === 'rejected' ? 409 : order.status === 'ready' ? 200 : 202,{ order:{ ...order, canRetry:true } });
@@ -487,8 +446,8 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
         console.warn('eSIM renewal request unavailable');
         return respond(503,{error:'续费服务暂时不可用。已提交的请求请到续费记录中核对。'});
       }
-      if (!security) console.warn('eSIM purchase request unavailable');
-      return respond(503,{ error:security ? '支付密码服务暂时不可用。' : '购买服务暂时不可用。如已确认支付，请打开购买记录核对。' });
+      console.warn('eSIM purchase request unavailable');
+      return respond(503,{ error:'购买服务暂时不可用。如已确认支付，请打开购买记录核对。' });
     }
   }
   async function summary(user) {
@@ -502,11 +461,6 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
       ...(isAdmin(user) ? {allocatedRaw:await allocated(db)} : {}),
     };
   }
-  async function verifyPin(user,pin) {
-    check(validPin(pin),400,'请输入 6 位支付密码。');
-    const db = await dbReady();
-    return serialize(async () => verifyPaymentPin(db,user,pin,await readSecurity(db,user)));
-  }
   const settle = async () => settlePendingPayments(await dbReady(),wallet);
-  return { route, summary, sync, reconcile, verifyPin, settle, usesSupplier, supplierBalance, customerProfiles, ready:dbReady };
+  return { route, summary, sync, reconcile, settle, usesSupplier, supplierBalance, customerProfiles, ready:dbReady };
 }

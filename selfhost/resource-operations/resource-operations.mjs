@@ -7,6 +7,7 @@ import { trustedHeaders } from './auth.mjs';
 import { makeEsimWorkbook } from './esim-export.mjs';
 import { openEsimMailLog, normalizeRecipient } from './esim-mail-log.mjs';
 import { openEsimArchives } from './esim-archives.mjs';
+import { openEsimWatches } from './esim-watches.mjs';
 import { maxWorkbookBytes } from '../outlook-mail.mjs';
 
 const isEsimId = id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id);
@@ -50,6 +51,7 @@ function customerHistoryItem({profile,override}) {
     smdpStatus: profile.smdpStatus,
     totalVolume: profile.totalVolume || 0,
     orderUsage: profile.orderUsage || 0,
+    usageReported: Number.isFinite(profile.orderUsage) && profile.orderUsage >= 0,
     expiredTime: profile.expiredTime || null,
     totalDuration: profile.totalDuration || plan?.duration || null,
     durationUnit: profile.durationUnit || 'DAY',
@@ -69,6 +71,64 @@ const statusForMail = {
   waiting: { code:'pending', tone:'warning', label:'等待交付', detail:'订单尚无交付完成回执。' },
 };
 
+function formatVolume(bytes) {
+  return bytes >= 1024 ** 3
+    ? `${Number((bytes / 1024 ** 3).toFixed(2))} GB`
+    : `${Number((bytes / 1024 ** 2).toFixed(1))} MB`;
+}
+
+function reminderUsage(item) {
+  const used = item.orderUsage;
+  const total = item.totalVolume;
+  const usedKnown = item.usageReported !== false && Number.isFinite(used) && used >= 0;
+  const totalKnown = Number.isFinite(total) && total > 0;
+  if (!totalKnown) {
+    if (usedKnown && item.dataType === 4) return `用量：${formatVolume(used)} / 不限量`;
+    return usedKnown ? `用量：${formatVolume(used)} / 总量暂未获取` : '用量：暂未获取';
+  }
+  if (!usedKnown) return `用量：暂未获取 / ${formatVolume(total)}`;
+  const percent = Number(((used / total) * 100).toFixed(1));
+  return `用量：${formatVolume(used)} / ${formatVolume(total)}（已使用：${percent}%）`;
+}
+
+export function esimReminderCandidates(items, now, watched = new Map()) {
+  const result = [];
+  for (const item of items) {
+    if (['USED_EXPIRED','UNUSED_EXPIRED','CANCEL','REVOKED'].includes(item.esimStatus) || ['DELETED','REVOKED'].includes(item.smdpStatus)) continue;
+    const expiry = Date.parse(item.expiredTime);
+    const masked = item.iccid ? `••••${item.iccid.slice(-4)}` : '—';
+    const label = `${String(item.packageName).slice(0,100)} · ${masked}`;
+    if (!watched.has(item.esimTranNo) && expiry > now && expiry <= now + 5 * day) {
+      const lastDay = expiry - now <= day;
+      // Keep the original five-day key so existing notices stay deduplicated after upgrade.
+      const prefix = lastDay ? 'expiry-1d' : 'expiry';
+      result.push({id:`${prefix}:${item.esimTranNo}:${item.expiredTime}`,resource:item.esimTranNo,kind:'expiry',
+        text:`${label} · ${item.expiryKind === 'activation' ? '最晚激活' : '套餐到期'} ${lastDate.format(expiry)}（UTC+8，${lastDay ? '1 天内' : '5 天内'}）\n${reminderUsage(item)}`});
+    }
+    if (item.activateTime && expiry > now && item.dataType === 1 && item.totalVolume > 0 && item.orderUsage / item.totalVolume > 0.9) {
+      const left = Math.max(0,(1-item.orderUsage/item.totalVolume)*100);
+      result.push({id:`low-data:${item.esimTranNo}:${item.totalVolume}`,resource:item.esimTranNo,kind:'low_data',text:`${label} · 剩余流量 ${(Math.floor(left * 10) / 10).toFixed(1)}%`});
+    }
+  }
+  return result;
+}
+
+export function telegramReminderPayload(chatId, origin, batch) {
+  const payload = {chat_id:chatId,text:`Yorke AI · eSIM 资源提醒\n\n${batch.map(row => row.text).join('\n')}`};
+  if (batch.length === 1 && batch[0].kind === 'expiry') {
+    const link = key => {
+      const url = new URL('/',origin);
+      url.searchParams.set(key,batch[0].resource);
+      return url.href;
+    };
+    payload.reply_markup = {inline_keyboard:[
+      [{text:'续订',url:link('renewEsim')}],
+      [{text:'不续订并加入观察组',url:link('watchEsim')}],
+    ]};
+  }
+  return payload;
+}
+
 export function makeResourceOperations({ root, config, mf, identities, readBody, outlook, purchases, wallet }) {
   const bindings = config.bindings || {};
   const archiveOrigins = new Set([config.origin, ...(config.aliasOrigins || [])]);
@@ -81,6 +141,7 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
   const exports = new Set();
   const mailLog = openEsimMailLog(root);
   const archives = openEsimArchives(root);
+  const watches = openEsimWatches(root);
 
   async function overview(user) {
     const viewer = viewerFor(config,user);
@@ -135,20 +196,28 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       await purchases.reconcile(user,data.history?.items).catch(() => {});
       if (Array.isArray(data.history?.items)) {
         const archived = archives.list(user.id);
-        data.history.items = data.history.items.map(item => ({...item, archivedAt:archived.get(item.esimTranNo) ?? null}));
+        const watched = watches.list();
+        data.history.items = data.history.items.map(item => ({
+          ...item,
+          archivedAt: archived.get(item.esimTranNo) ?? null,
+          watchedAt: watched.get(item.esimTranNo) ?? null,
+        }));
       }
       json(res,status,data); return true;
     }
-    if (url.pathname === '/api/esim/archive') {
+    if (['/api/esim/archive','/api/esim/watch'].includes(url.pathname)) {
+      const observation = url.pathname === '/api/esim/watch';
       if (req.method !== 'POST') { json(res,405,{error:'请求方式不支持。'}); return true; }
       if (!archiveOrigins.has(req.headers.origin) || !/^application\/json\b/i.test(req.headers['content-type'] || '')) {
         json(res,403,{error:'请求来源不匹配。'}); return true;
       }
       let fields;
       try { fields = JSON.parse(await readBody(req,700_000)); } catch {}
+      const enabled = observation ? fields?.watching : fields?.archived;
       if (!Array.isArray(fields?.ids) || !fields.ids.length || fields.ids.length > archiveBatchLimit
-        || !fields.ids.every(isEsimId) || typeof fields.archived !== 'boolean') {
-        json(res,400,{error:'请勾选要归档或恢复的 eSIM，单次最多 10,000 张。'}); return true;
+        || !fields.ids.every(isEsimId) || typeof enabled !== 'boolean') {
+        const error = observation ? '请勾选要加入或移出观察组的 eSIM，单次最多 10,000 张。' : '请勾选要归档或恢复的 eSIM，单次最多 10,000 张。';
+        json(res,400,{error}); return true;
       }
       const ids = [...new Set(fields.ids)];
       const result = await overview(user).catch(() => null);
@@ -159,8 +228,8 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       if (!ids.every(id => visible.has(id))) {
         json(res,403,{error:'所选资源已变更或当前账号无权访问。请刷新后重试。'}); return true;
       }
-      const archivedAt = archives.set(user.id,ids,fields.archived);
-      json(res,200,{ids,archivedAt}); return true;
+      const resultDate = observation ? {watchedAt:watches.set(ids,enabled)} : {archivedAt:archives.set(user.id,ids,enabled)};
+      json(res,200,{ids,...resultDate}); return true;
     }
     if (req.method === 'GET' && url.pathname === '/api/mail-deliveries') {
       const {status,data} = await mailRecords(user); json(res,status,data); return true;
@@ -260,21 +329,6 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
     const state = JSON.parse(Buffer.from(data).toString('utf8'));
     return { botToken:state.botToken, chatId:bindings.TELEGRAM_CHAT_ID?.trim() || state.chatId };
   }
-  function candidates(items, now) {
-    const result = [];
-    for (const item of items) {
-      if (['USED_EXPIRED','UNUSED_EXPIRED','CANCEL','REVOKED'].includes(item.esimStatus) || ['DELETED','REVOKED'].includes(item.smdpStatus)) continue;
-      const expiry = Date.parse(item.expiredTime);
-      const masked = item.iccid ? `••••${item.iccid.slice(-4)}` : '—';
-      const label = `${String(item.packageName).slice(0,100)} · ${masked}`;
-      if (expiry > now && expiry <= now + 5 * day) result.push({id:`expiry:${item.esimTranNo}:${item.expiredTime}`,resource:item.esimTranNo,kind:'expiry',text:`${label} · ${item.expiryKind === 'activation' ? '最晚激活' : '套餐到期'} ${lastDate.format(expiry)}（UTC+8）`});
-      if (item.activateTime && expiry > now && item.dataType === 1 && item.totalVolume > 0 && item.orderUsage / item.totalVolume > 0.9) {
-        const left = Math.max(0,(1-item.orderUsage/item.totalVolume)*100);
-        result.push({id:`low-data:${item.esimTranNo}:${item.totalVolume}`,resource:item.esimTranNo,kind:'low_data',text:`${label} · 剩余流量 ${(Math.floor(left * 10) / 10).toFixed(1)}%`});
-      }
-    }
-    return result;
-  }
   async function checkReminders({ send = false } = {}) {
     if (checking) return;
     checking = true;
@@ -286,20 +340,33 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       if (!settings.botToken || !settings.chatId) throw Error('Telegram 尚未配置');
       const received = await overview(user);
       if (received.status !== 200 || !Array.isArray(received.data.history?.items)) throw Error('供应商数据不可用');
-      const records = candidates(received.data.history.items,Date.now());
+      const records = esimReminderCandidates(received.data.history.items,Date.now(),watches.list());
       const fresh = [];
       for (const row of records) {
         if (!await db.prepare('SELECT id FROM notification_log WHERE id=?').bind(row.id).first()) fresh.push(row);
       }
       progress.lastCheckedAt = new Date().toISOString(); progress.matched = records.length; progress.notified = 0; progress.error = null;
       if (!send) return;
-      for (let i = 0; i < fresh.length; i += 12) {
-        const batch = fresh.slice(i, i + 12);
-        const response = await fetch(`https://api.telegram.org/bot${settings.botToken}/sendMessage`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:settings.chatId,text:`Lumen · eSIM 资源提醒\n\n${batch.map(row => row.text).join('\n')}`}),signal:AbortSignal.timeout(12000)});
+      // Telegram's per-chat limit is tighter for groups. Sending expiry notices
+      // one card at a time must not turn a large renewal list into a burst.
+      const spacing = String(settings.chatId).startsWith('-') ? 3100 : 1100;
+      let nextSendAt = 0;
+      async function sendBatch(batch) {
+        const pause = nextSendAt - Date.now();
+        if (pause > 0) await new Promise(resolve => setTimeout(resolve,pause));
+        if (batch[0].kind === 'expiry' && watches.has(batch[0].resource)) return;
+        const response = await fetch(`https://api.telegram.org/bot${settings.botToken}/sendMessage`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(telegramReminderPayload(settings.chatId,config.origin,batch)),signal:AbortSignal.timeout(12000)});
         if (!response.ok || !(await response.json()).ok) throw Error(`Telegram 发送失败 (${response.status})`);
+        nextSendAt = Date.now() + spacing;
         await db.batch(batch.map(row => db.prepare('INSERT OR IGNORE INTO notification_log (id,resource_id,kind) VALUES (?,?,?)').bind(row.id,row.resource,row.kind)));
         progress.notified += batch.length;
       }
+      // One expiry message per card keeps both buttons bound to the exact resource.
+      for (const row of fresh.filter(row => row.kind === 'expiry')) {
+        await sendBatch([row]);
+      }
+      const lowData = fresh.filter(row => row.kind === 'low_data');
+      for (let i = 0; i < lowData.length; i += 12) await sendBatch(lowData.slice(i,i + 12));
     } catch (error) {
       progress.error = ['无管理员账号','Telegram 尚未配置','供应商数据不可用'].includes(error.message) || /^Telegram 发送失败 \(\d+\)$/.test(error.message) ? error.message : '检查失败，等待下次运行';
     } finally { checking = false; }
@@ -309,5 +376,5 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
     progress.nextCheckAt = new Date(Date.now() + pollInterval).toISOString();
     void checkReminders({send:true});
   },pollInterval);
-  return { route, close() { clearTimeout(initial); clearInterval(timer); archives.close(); mailLog.close(); } };
+  return { route, close() { clearTimeout(initial); clearInterval(timer); watches.close(); archives.close(); mailLog.close(); } };
 }

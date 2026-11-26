@@ -89,6 +89,7 @@ type ResourceGroup = {
 
 type PurchaseHistoryItem = {
   archivedAt?: string | null;
+  watchedAt?: string | null;
   availabilityStatus?: string;
   availabilityNote?: string | null;
   availabilityRecheckAt?: string | null;
@@ -392,6 +393,13 @@ function daysUntil(value: string | null) {
   return Number.isFinite(days) ? days : null;
 }
 
+function esimExpiresWithin(item: PurchaseHistoryItem, days: number) {
+  if (["USED_EXPIRED", "UNUSED_EXPIRED", "CANCEL", "REVOKED"].includes(item.esimStatus) || ["DELETED", "REVOKED"].includes(item.smdpStatus)) return false;
+  const expires = item.expiredTime ? Date.parse(item.expiredTime) : NaN;
+  const remaining = expires - Date.now();
+  return remaining > 0 && remaining <= days * 86_400_000;
+}
+
 function maskIdentifier(value: string | null) {
   if (!value) return "—";
   if (value.length <= 8) return value;
@@ -409,7 +417,6 @@ export default function Home() {
     | "admin"
     | "quota"
     | "sync"
-    | "security"
   >("store");
   const marketTableEnabled = useMarketTable();
   const market = useResourceMarket(() => setView("store"));
@@ -419,7 +426,6 @@ export default function Home() {
   const [favoriteState, setFavoriteState] = useState<{ key: string; items: string[] }>({ key: "", items: [] });
   const [selected, setSelected] = useState<string[]>([]);
   const [purchaseOpen, setPurchaseOpen] = useState(false);
-  const [pin, setPin] = useState("");
   const [success, setSuccess] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<ResourceGroup | null>(null);
@@ -443,6 +449,11 @@ export default function Home() {
   const isCustomer = viewer?.role === "customer";
   const favoriteKey = viewer?.userId ? (isCustomer ? `lumen-favorites:${viewer.userId}` : "lumen-favorites") : "";
   const favorites = favoriteState.key === favoriteKey ? favoriteState.items : [];
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("renewEsim") || params.has("watchEsim")) setView("history");
+  }, []);
 
   const loadGroups = async () => {
     const response = await fetch("/api/groups", { cache: "no-store" });
@@ -600,14 +611,12 @@ export default function Home() {
     );
   const openPurchase = (id?: string) => {
     if (id && !selected.includes(id)) setSelected([id]);
-    setPin("");
     setPurchaseOpen(true);
   };
   const confirmPurchase = (event: React.FormEvent) => {
     event.preventDefault();
     setPurchaseOpen(false);
     setSelected([]);
-    setPin("");
     setSuccess(true);
     window.setTimeout(() => setSuccess(false), 4200);
   };
@@ -647,7 +656,7 @@ export default function Home() {
               <Sparkles size={18} />
             </div>
             <div>
-              <p className="text-[15px] font-semibold tracking-wide">LUMEN</p>
+              <p className="text-[15px] font-semibold tracking-wide">Yorke AI</p>
               <p className="text-[10px] tracking-[.2em] text-blue-200">
                 RESOURCE HUB
               </p>
@@ -751,12 +760,6 @@ export default function Home() {
             </p>
           </div>
         )}
-        <button
-          onClick={() => setView("security")}
-          className={`${view === "security" ? "bg-white/10 text-white" : "text-blue-100 hover:bg-white/[.06]"} m-3 mt-0 flex items-center gap-3 rounded-xl px-4 py-3 text-sm`}
-        >
-          <Settings size={17} /> 安全与支付设置
-        </button>
       </aside>
       {mobileNav && (
         <button
@@ -840,16 +843,6 @@ export default function Home() {
                     <UserCircle size={16} />
                     我的资源
                   </button>
-                  <button
-                    onClick={() => {
-                      setView("security");
-                      setUserMenu(false);
-                    }}
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-slate-600 hover:bg-slate-50"
-                  >
-                    <KeyRound size={16} />
-                    安全与支付设置
-                  </button>
                   {isAdmin && (
                     <button
                       onClick={() => {
@@ -894,7 +887,6 @@ export default function Home() {
               favoriteIds: favorites,
               toggleFavorite,
               resetQuery: () => setQuery(""),
-              openSecurity: () => setView("security"),
             } : undefined}
             activeGroup={activeGroup}
             setActiveGroup={setActiveGroup}
@@ -937,6 +929,17 @@ export default function Home() {
                   : item),
               },
             } : current);
+          }} onWatchUpdated={(ids, watchedAt) => {
+            const updated = new Set(ids);
+            setOverview((current) => current.history ? {
+              ...current,
+              history: {
+                ...current.history,
+                items: current.history.items.map((item) => updated.has(item.esimTranNo)
+                  ? { ...item, watchedAt }
+                  : item),
+              },
+            } : current);
           }} />
         )}
         {view === "warehouse" && viewer && <WarehouseView />}
@@ -945,7 +948,6 @@ export default function Home() {
         {view === "admin" && isAdmin && <AdminView overview={overview} />}
         {view === "quota" && <QuotaView overview={overview} />}
         {view === "sync" && isAdmin && <SupplierSyncView overview={overview} />}
-        {view === "security" && <SecurityView overview={overview} />}
       </main>
 
       {!marketTableEnabled && selected.length > 0 && !purchaseOpen && (
@@ -979,8 +981,6 @@ export default function Home() {
       {purchaseOpen && (
         <PurchaseModal
           count={selected.length || 1}
-          pin={pin}
-          setPin={setPin}
           close={() => setPurchaseOpen(false)}
           confirm={confirmPurchase}
         />
@@ -1699,9 +1699,10 @@ function ResourceStatusPicker({
   );
 }
 
-function HistoryView({ overview, onArchiveUpdated }: {
+function HistoryView({ overview, onArchiveUpdated, onWatchUpdated }: {
   overview: PlatformOverview;
   onArchiveUpdated: (ids: string[], archivedAt: string | null) => void;
+  onWatchUpdated: (ids: string[], watchedAt: string | null) => void;
 }) {
   const isCustomer = overview.viewer?.role === "customer";
   const items = overview.history?.items || [];
@@ -1714,6 +1715,8 @@ function HistoryView({ overview, onArchiveUpdated }: {
   const [showArchived, setShowArchived] = useState(false);
   const [archivePending, setArchivePending] = useState(false);
   const [archiveFeedback, setArchiveFeedback] = useState("");
+  const [watchPending, setWatchPending] = useState(false);
+  const updatingGroups = archivePending || watchPending;
   const [notice, setNotice] = useState("");
   const [statusTarget, setStatusTarget] = useState<ResourceStatusTarget | null>(
     null,
@@ -1724,6 +1727,47 @@ function HistoryView({ overview, onArchiveUpdated }: {
       { status: string; note: string | null; recheckAt: string | null }
     >
   >({});
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const renewId = url.searchParams.get("renewEsim");
+    const watchId = url.searchParams.get("watchEsim");
+    const id = renewId || watchId;
+    if (!id) return;
+    if (!overview.history) {
+      if (overview.error) setArchiveFeedback("暂时无法读取提醒关联的 eSIM，请刷新页面。");
+      return;
+    }
+    const item = overview.history.items.find((entry) => entry.esimTranNo === id);
+    url.searchParams.delete("renewEsim");
+    url.searchParams.delete("watchEsim");
+    window.history.replaceState(window.history.state, "", url);
+    if (!item) {
+      setArchiveFeedback("未找到提醒关联的 eSIM，请确认登录账号。");
+      return;
+    }
+    setShowArchived(Boolean(item.archivedAt));
+    setResourceQuery(item.esimTranNo);
+    setSelected([item.esimTranNo]);
+    if (renewId) {
+      if (!item.iccid || (item.expiredTime && Date.parse(item.expiredTime) <= Date.now()) ||
+          ["USED_EXPIRED", "UNUSED_EXPIRED", "CANCEL", "REVOKED"].includes(item.esimStatus)) {
+        setArchiveFeedback("此 eSIM 已到期或暂时无法续订。");
+        return;
+      }
+      const openRenewal = () => window.dispatchEvent(new CustomEvent("lumen:renew", { detail: { ids: [id], close: () => {} } }));
+      if (document.readyState === "complete") openRenewal();
+      else {
+        window.addEventListener("load", openRenewal, { once: true });
+        return () => window.removeEventListener("load", openRenewal);
+      }
+    } else if (item.watchedAt) {
+      setStatus("watching");
+      setArchiveFeedback("提醒关联的 eSIM 已加入观察组。");
+    } else {
+      setArchiveFeedback("已选中提醒对应的 eSIM，请点击「加入观察组」确认。");
+    }
+  }, [overview.history, overview.error]);
   const decoratedItems = items.map((item) => {
     const override = availabilityOverrides[item.esimTranNo];
     return override
@@ -1745,8 +1789,12 @@ function HistoryView({ overview, onArchiveUpdated }: {
         : status === "active"
           ? ["GOT_RESOURCE", "IN_USE"].includes(item.esimStatus) &&
             item.availabilityStatus !== "temporary_unavailable"
+          : status === "watching"
+            ? Boolean(item.watchedAt)
+          : status === "expiring5"
+            ? esimExpiresWithin(item, 5)
           : status === "expiring"
-            ? (daysUntil(item.expiredTime) ?? 999) <= 30
+            ? esimExpiresWithin(item, 30)
             : status === "USED_EXPIRED"
               ? ["USED_EXPIRED", "UNUSED_EXPIRED"].includes(item.esimStatus)
               : item.esimStatus === status);
@@ -1761,10 +1809,7 @@ function HistoryView({ overview, onArchiveUpdated }: {
   const renewableItems = currentItems.filter(
     (item) => item.iccid && (daysUntil(item.expiredTime) ?? 1) >= 0,
   );
-  const expiringItems = currentItems.filter((item) => {
-    const days = daysUntil(item.expiredTime);
-    return days !== null && days >= 0 && days <= 30;
-  });
+  const expiringItems = currentItems.filter((item) => esimExpiresWithin(item, 30));
   const unavailableItems = currentItems.filter(
     (item) => item.availabilityStatus === "temporary_unavailable",
   );
@@ -1772,6 +1817,8 @@ function HistoryView({ overview, onArchiveUpdated }: {
   const selectedItems = visibleItems.filter((item) =>
     selectedSet.has(item.esimTranNo),
   );
+  const toWatch = selectedItems.filter((item) => !item.watchedAt);
+  const toUnwatch = selectedItems.filter((item) => item.watchedAt);
   const toggleSelected = (id: string) =>
     setSelected((current) =>
       current.includes(id)
@@ -1790,9 +1837,8 @@ function HistoryView({ overview, onArchiveUpdated }: {
     setSelected([]);
     setArchiveFeedback("");
   }
-  async function updateArchive() {
-    if (archivePending || !selectedItems.length) return;
-    const ids = selectedItems.map((item) => item.esimTranNo);
+  async function updateArchive(ids = selectedItems.map((item) => item.esimTranNo)) {
+    if (updatingGroups || !ids.length) return;
     const fallback = "无法更新归档状态，请重试。";
     setArchivePending(true);
     setArchiveFeedback("正在更新归档状态…");
@@ -1808,12 +1854,38 @@ function HistoryView({ overview, onArchiveUpdated }: {
         return;
       }
       onArchiveUpdated(result.ids, result.archivedAt);
-      setSelected([]);
+      setSelected(current => current.filter(id => !result.ids.includes(id)));
       setArchiveFeedback(showArchived ? `已恢复 ${result.ids.length} 张 eSIM。` : `已归档 ${result.ids.length} 张 eSIM。`);
     } catch {
       setArchiveFeedback(fallback);
     } finally {
       setArchivePending(false);
+    }
+  }
+  async function updateWatch(watching: boolean) {
+    const ids = (watching ? toWatch : toUnwatch).map((item) => item.esimTranNo);
+    if (updatingGroups || !ids.length) return;
+    const fallback = "无法更新观察组，请重试。";
+    setWatchPending(true);
+    setArchiveFeedback("正在更新观察组…");
+    try {
+      const response = await fetch("/api/esim/watch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ids, watching }),
+      });
+      const result = await response.json() as { ids: string[]; watchedAt: string | null; error?: string };
+      if (!response.ok) {
+        setArchiveFeedback(result.error || fallback);
+        return;
+      }
+      onWatchUpdated(result.ids, result.watchedAt);
+      setSelected(current => current.filter(id => !result.ids.includes(id)));
+      setArchiveFeedback(watching ? `已加入观察组 ${result.ids.length} 张 eSIM。` : `已移出观察组 ${result.ids.length} 张 eSIM。`);
+    } catch {
+      setArchiveFeedback(fallback);
+    } finally {
+      setWatchPending(false);
     }
   }
   const notify = (message: string) => {
@@ -1872,7 +1944,7 @@ function HistoryView({ overview, onArchiveUpdated }: {
             iconClass="bg-[#fff3e9] text-[#dc702b]"
             label="30 天内到期"
             value={`${expiringItems.length} 件`}
-            note="Telegram 将在到期前 5 天提醒管理员"
+            note="Telegram 将在到期前 5 天和 1 天提醒管理员"
           />
           <Metric
             icon={<AlertTriangle size={19} />}
@@ -1904,19 +1976,27 @@ function HistoryView({ overview, onArchiveUpdated }: {
       )}
       <section className="lumen-esim-archive-toolbar">
         <div className="lumen-esim-archive-views" role="group" aria-label="eSIM 归档视图">
-          <button type="button" data-esim-archive-view="current" aria-pressed={!showArchived} disabled={archivePending} onClick={() => switchArchiveView(false)}>当前资源</button>
-          <button type="button" data-esim-archive-view="archived" aria-pressed={showArchived} disabled={archivePending} onClick={() => switchArchiveView(true)}>已归档</button>
+          <button type="button" data-esim-archive-view="current" aria-pressed={!showArchived} disabled={updatingGroups} onClick={() => switchArchiveView(false)}>当前资源</button>
+          <button type="button" data-esim-archive-view="archived" aria-pressed={showArchived} disabled={updatingGroups} onClick={() => switchArchiveView(true)}>已归档</button>
         </div>
+        <div className="lumen-esim-group-actions">
+          <button type="button" className="lumen-esim-archive-action" data-esim-watch-action="add" disabled={updatingGroups || !toWatch.length} onClick={() => void updateWatch(true)}>
+            加入观察组{toWatch.length ? ` (${toWatch.length})` : ""}
+          </button>
+          <button type="button" className="lumen-esim-archive-action" data-esim-watch-action="remove" disabled={updatingGroups || !toUnwatch.length} onClick={() => void updateWatch(false)}>
+            移出观察组{toUnwatch.length ? ` (${toUnwatch.length})` : ""}
+          </button>
         <button
           type="button"
           className="lumen-esim-archive-action"
           data-esim-archive-action={showArchived ? "restore" : "archive"}
-          disabled={archivePending || !selectedItems.length}
+          disabled={updatingGroups || !selectedItems.length}
           onClick={() => void updateArchive()}
         >
           {showArchived ? "恢复所选" : "归档所选"}
           {selectedItems.length ? ` (${selectedItems.length})` : ""}
         </button>
+        </div>
         <p className="lumen-esim-archive-feedback" role="status" hidden={!archiveFeedback}>{archiveFeedback}</p>
       </section>
       <section className="mb-4 flex flex-col gap-3 rounded-2xl border border-[#e3e8f0] bg-white p-4 md:flex-row md:items-end">
@@ -1945,7 +2025,9 @@ function HistoryView({ overview, onArchiveUpdated }: {
             { value: "all", label: "全部状态" },
             { value: "temporary_unavailable", label: "暂时无法使用" },
             { value: "active", label: "可用/使用中" },
+            { value: "expiring5", label: "5 天内到期" },
             { value: "expiring", label: "30 天内到期" },
+            { value: "watching", label: "观察组" },
             { value: "USED_UP", label: "流量已用尽" },
             { value: "USED_EXPIRED", label: "已过期" },
           ]}
@@ -1970,8 +2052,9 @@ function HistoryView({ overview, onArchiveUpdated }: {
         selected={selected}
         toggleSelected={toggleSelected}
         toggleAll={toggleAll}
-        selectingDisabled={archivePending}
+        selectingDisabled={updatingGroups}
         onDetail={setDetail}
+        onArchive={item => void updateArchive([item.esimTranNo])}
         onRenew={(item) => setRenewTargets([item])}
         manageable
       />
@@ -2362,177 +2445,6 @@ function SyncItem({ label, ready }: { label: string; ready: boolean }) {
   );
 }
 
-function SecurityView({ overview }: { overview: PlatformOverview }) {
-  const [configured, setConfigured] = useState(false);
-  const [currentPin, setCurrentPin] = useState("");
-  const [newPin, setNewPin] = useState("");
-  const [confirmPin, setConfirmPin] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(
-    null,
-  );
-  useEffect(() => {
-    fetch("/api/settings/security")
-      .then((response) => response.json() as Promise<{ configured?: boolean }>)
-      .then((data) => setConfigured(Boolean(data.configured)));
-  }, []);
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setMessage(null);
-    if (newPin !== confirmPin) {
-      setMessage({ ok: false, text: "两次输入的新支付密码不一致" });
-      return;
-    }
-    setSaving(true);
-    const response = await fetch("/api/settings/security", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ currentPin, newPin }),
-    });
-    const data = (await response.json()) as {
-      configured?: boolean;
-      error?: string;
-    };
-    setSaving(false);
-    if (!response.ok) {
-      setMessage({ ok: false, text: data.error || "保存失败" });
-      return;
-    }
-    setConfigured(true);
-    setCurrentPin("");
-    setNewPin("");
-    setConfirmPin("");
-    setMessage({ ok: true, text: "支付密码已安全保存" });
-  };
-  return (
-    <div className="mx-auto max-w-[1100px] px-5 py-7 md:px-8 md:py-9">
-      <section className="mb-7">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-[.16em] text-[#6582bd]">
-          安全中心
-        </p>
-        <h1 className="text-2xl font-semibold tracking-tight md:text-[30px]">
-          安全与支付设置
-        </h1>
-        <p className="mt-2 text-sm text-slate-500">
-          管理当前登录账号的支付密码和敏感资源访问规则。
-        </p>
-      </section>
-      <section className="grid gap-6 lg:grid-cols-[1fr_.75fr]">
-        <form
-          onSubmit={submit}
-          className="rounded-[20px] border border-[#e5e9f0] bg-white p-6 md:p-7"
-        >
-          <div className="flex items-start justify-between">
-            <div>
-              <h2 className="text-lg font-semibold">6位支付密码</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                购买和批量续订时使用
-              </p>
-            </div>
-            <span
-              className={`${configured ? "bg-[#e9f8f2] text-[#177359]" : "bg-[#fff4e5] text-[#ae671c]"} rounded-full px-3 py-1 text-[11px] font-medium`}
-            >
-              {configured ? "已设置" : "未设置"}
-            </span>
-          </div>
-          <div className="mt-6 space-y-4">
-            {configured && (
-              <PinInput
-                label="当前支付密码"
-                value={currentPin}
-                setValue={setCurrentPin}
-              />
-            )}
-            <PinInput
-              label={configured ? "新支付密码" : "设置支付密码"}
-              value={newPin}
-              setValue={setNewPin}
-            />
-            <PinInput
-              label="再次确认"
-              value={confirmPin}
-              setValue={setConfirmPin}
-            />
-            {message && (
-              <div
-                className={`${message.ok ? "bg-[#eef9f4] text-[#26775f]" : "bg-[#fff3ef] text-[#a85845]"} rounded-xl p-3 text-xs`}
-              >
-                {message.text}
-              </div>
-            )}
-            <button
-              disabled={
-                saving ||
-                newPin.length !== 6 ||
-                confirmPin.length !== 6 ||
-                (configured && currentPin.length !== 6)
-              }
-              className="h-11 w-full rounded-xl bg-[#1d3b72] text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {saving
-                ? "正在保存"
-                : configured
-                  ? "更新支付密码"
-                  : "启用支付密码"}
-            </button>
-          </div>
-        </form>
-        <div className="space-y-4">
-          <div className="rounded-[20px] border border-[#dfe8fa] bg-[#f4f7fd] p-6">
-            <ShieldCheck size={22} className="text-[#4267ae]" />
-            <h3 className="mt-4 font-semibold">账号保护</h3>
-            <p className="mt-2 text-xs leading-5 text-[#526b95]">
-              密码经过高强度单向哈希后保存，后台无法查看明文。二维码和完整编号仅对购买人及管理员开放。
-            </p>
-          </div>
-          <div className="rounded-[20px] border border-[#e5e9f0] bg-white p-6">
-            <p className="text-[10px] uppercase tracking-wider text-slate-400">
-              当前账号
-            </p>
-            <p className="mt-2 text-sm font-semibold">
-              {overview.viewer?.displayName}
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              {overview.viewer?.email}
-            </p>
-            <span className="mt-4 inline-flex rounded-full bg-[#eef3fb] px-3 py-1 text-[11px] text-[#4267ae]">
-              {overview.viewer?.isAdmin ? "资源管理员" : overview.viewer?.role === "customer" ? "用户账号" : "合伙人账号"}
-            </span>
-          </div>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function PinInput({
-  label,
-  value,
-  setValue,
-}: {
-  label: string;
-  value: string;
-  setValue: (value: string) => void;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-2 block text-sm font-medium">{label}</span>
-      <input
-        required
-        type="password"
-        inputMode="numeric"
-        autoComplete="off"
-        value={value}
-        onChange={(event) =>
-          setValue(event.target.value.replace(/\D/g, "").slice(0, 6))
-        }
-        placeholder="请输入6位数字"
-        className="h-12 w-full rounded-xl border border-slate-200 px-4 tracking-[.3em] outline-none focus:border-[#87a3d9] focus:ring-4 focus:ring-blue-50"
-      />
-    </label>
-  );
-}
-
 function AdminView({ overview }: { overview: PlatformOverview }) {
   const balance = formatMoney(
     overview.balance?.amount,
@@ -2694,7 +2606,7 @@ function AdminView({ overview }: { overview: PlatformOverview }) {
                 </span>
               </div>
               <p className="mt-2 text-xs leading-5 text-slate-500">
-                仅发送提醒，不会自动续费：到期前 5 天，或剩余流量低于 10%
+                仅发送提醒，不会自动续费：到期前 5 天和 1 天，或剩余流量低于 10%
                 时推送到管理员 Telegram。
                 {telegram?.maskedChatId
                   ? ` 接收方 ${telegram.maskedChatId}`
@@ -2710,7 +2622,7 @@ function AdminView({ overview }: { overview: PlatformOverview }) {
               </div>
               <div className="rounded-xl bg-[#f6f9fd] p-3 text-center">
                 <p className="text-[10px] text-slate-400">到期阈值</p>
-                <p className="mt-1 text-xs font-semibold">提前 5 天</p>
+                <p className="mt-1 text-xs font-semibold">提前 5 天和 1 天</p>
               </div>
               <div className="rounded-xl bg-[#f6f9fd] p-3 text-center">
                 <p className="text-[10px] text-slate-400">余量阈值</p>
@@ -2941,6 +2853,7 @@ function PurchaseTable({
   toggleAll,
   selectingDisabled = false,
   onDetail,
+  onArchive,
   onRenew,
 }: {
   items: PurchaseHistoryItem[];
@@ -2952,6 +2865,7 @@ function PurchaseTable({
   toggleSelected?: (id: string) => void;
   toggleAll?: () => void;
   selectingDisabled?: boolean;
+  onArchive?: (item: PurchaseHistoryItem) => void;
   onDetail?: (item: PurchaseHistoryItem) => void;
   onRenew?: (item: PurchaseHistoryItem) => void;
 }) {
@@ -3034,6 +2948,7 @@ function PurchaseTable({
                       <span className="rounded-full bg-[#e9f8f2] px-2.5 py-1 text-[11px] font-medium text-[#177359]">
                         {statusLabel(item.esimStatus)}
                       </span>
+                      {item.watchedAt && <span className="lumen-esim-watch-badge" data-esim-watch-badge>观察组</span>}
                       <p className="mt-2 text-[10px] text-slate-400">
                         SM-DP+ {item.smdpStatus || "—"}
                       </p>
@@ -3096,6 +3011,9 @@ function PurchaseTable({
                           >
                             续订
                           </button>
+                          {onArchive && <button type="button" className="esim-row-archive" disabled={selectingDisabled} onClick={() => onArchive(item)}>
+                            {item.archivedAt ? "恢复" : "归档"}
+                          </button>}
                         </div>
                       </td>
                     )}
@@ -3432,7 +3350,6 @@ function RenewModal({
   const [selectedPlan, setSelectedPlan] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [pin, setPin] = useState("");
   const firstIccid = items[0]?.iccid;
   useEffect(() => {
     let active = true;
@@ -3476,7 +3393,7 @@ function RenewModal({
   const plan = plans.find((item) => item.id === selectedPlan);
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
-    if (pin.length === 6 && (plan || items.length > 1)) complete();
+    if (plan || items.length > 1) complete();
   };
   return (
     <div className="fixed inset-0 z-[65] flex items-end justify-center bg-[#0d1b35]/60 backdrop-blur-[2px] sm:items-center sm:p-5">
@@ -3590,29 +3507,11 @@ function RenewModal({
             <div className="flex gap-3 rounded-xl border border-[#dfe8fa] bg-[#f4f7fd] p-4 text-xs leading-5 text-[#425b88]">
               <ShieldCheck className="mt-0.5 shrink-0" size={16} />
               <p>
-                每张卡都会分别校验兼容性、到期状态和实时价格；支付密码只验证一次。若单张匹配失败，其余资源继续处理并单独记录失败原因。
+                每张卡都会分别校验兼容性、到期状态和实时价格。若单张匹配失败，其余资源继续处理并单独记录失败原因。
               </p>
             </div>
           )}
-          <label className="block">
-            <span className="mb-2 flex items-center gap-2 text-sm font-medium">
-              <LockKeyhole size={15} className="text-[#486ba5]" />
-              支付密码
-            </span>
-            <input
-              required
-              value={pin}
-              onChange={(event) =>
-                setPin(event.target.value.replace(/\D/g, "").slice(0, 6))
-              }
-              type="password"
-              inputMode="numeric"
-              autoComplete="off"
-              placeholder="请输入 6 位支付密码"
-              minLength={6}
-              className="h-12 w-full rounded-xl border border-slate-200 px-4 tracking-[.35em] outline-none focus:border-[#87a3d9] focus:ring-4 focus:ring-blue-50"
-            />
-          </label>
+
           <div className="rounded-xl bg-[#fffaf3] p-4 text-xs leading-5 text-[#835d34]">
             当前站点尚未启用合伙人额度账本，因此这里只完成续订确认流程，不会向供应商发送付费订单。额度与真实下单启用后，续订金额将从对应平台额度扣除。
           </div>
@@ -3626,11 +3525,11 @@ function RenewModal({
             取消
           </button>
           <button
-            disabled={pin.length !== 6 || (!plan && items.length === 1)}
+            disabled={!plan && items.length === 1}
             type="submit"
             className="h-11 rounded-xl bg-[#1d3b72] px-6 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-45"
           >
-            验证并确认续订
+            确认续订
           </button>
         </div>
       </form>
@@ -3876,7 +3775,6 @@ function WarehouseView({ marketCategory }: { marketCategory?: MarketCategoryId }
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [claimBatch, setClaimBatch] = useState<WarehouseBatch | null>(null);
-  const [stockPin, setStockPin] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [recipientEmail, setRecipientEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -3915,7 +3813,6 @@ function WarehouseView({ marketCategory }: { marketCategory?: MarketCategoryId }
 
   const openClaim = (batch: WarehouseBatch) => {
     setClaimBatch({ ...batch, requestId: crypto.randomUUID() });
-    setStockPin("");
     setQuantity(1);
     setRecipientEmail("");
     setError("");
@@ -3936,7 +3833,7 @@ function WarehouseView({ marketCategory }: { marketCategory?: MarketCategoryId }
     let result: { error?: string; claimed?: number; emailStatus?: string; emailError?: string };
     try {
       const response = await fetch("/api/warehouse/claim", { method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ batchId: claimBatch.batchId, quantity, recipientEmail, requestId, quotedUnitRaw: claimBatch.retailUnitRaw, pin: stockPin }) });
+        body: JSON.stringify({ batchId: claimBatch.batchId, quantity, recipientEmail, requestId, quotedUnitRaw: claimBatch.retailUnitRaw }) });
       result = await response.json();
       if (!response.ok) { setError(result.error || "认领失败"); return; }
       try { if (key) sessionStorage.removeItem(key); } catch {}
@@ -4455,10 +4352,6 @@ function WarehouseView({ marketCategory }: { marketCategory?: MarketCategoryId }
                   认领后资源会保存在“我的认领”，并投递到此邮箱。请确认邮箱准确无误。
                 </span>
               </label>
-              {Boolean(claimBatch.retailUnitRaw) && <label className="block">六位支付密码
-                <input type="password" required value={stockPin} onChange={e => setStockPin(e.target.value)}
-                  inputMode="numeric" autoComplete="off" pattern="[0-9]{6}" maxLength={6}
-                  className="mt-2 h-12 w-full rounded-xl border border-slate-200 px-4" /></label>}
               <div className="rounded-xl border border-[#dfe8fa] bg-[#f4f7fd] p-4 text-xs leading-5 text-[#425b88]">
                 <ShieldCheck className="mr-2 inline" size={15} />
                 系统按实际认领数量结算，领取的资源保存在本账号并发送至所填邮箱。
@@ -4618,14 +4511,10 @@ function ProductCard({
 
 function PurchaseModal({
   count,
-  pin,
-  setPin,
   close,
   confirm,
 }: {
   count: number;
-  pin: string;
-  setPin: (value: string) => void;
   close: () => void;
   confirm: (event: React.FormEvent) => void;
 }) {
@@ -4668,31 +4557,8 @@ function PurchaseModal({
               真实下单将在额度账本启用后开放；当前页面不会向供应商发送付费订单。
             </div>
           </div>
-          <label className="block">
-            <span className="mb-2 flex items-center gap-2 text-sm font-medium">
-              <LockKeyhole size={15} className="text-[#486ba5]" />
-              支付密码
-            </span>
-            <input
-              required
-              value={pin}
-              onChange={(e) =>
-                setPin(e.target.value.replace(/\D/g, "").slice(0, 6))
-              }
-              type="password"
-              inputMode="numeric"
-              autoComplete="off"
-              placeholder="请输入 6 位支付密码"
-              minLength={6}
-              className="h-12 w-full rounded-xl border border-slate-200 px-4 tracking-[.35em] outline-none focus:border-[#87a3d9] focus:ring-4 focus:ring-blue-50"
-            />
-          </label>
-          <div className="flex items-start gap-3 rounded-xl border border-[#dfe8fa] bg-[#f4f7fd] p-4 text-xs leading-5 text-[#425b88]">
-            <ShieldCheck className="mt-0.5 shrink-0" size={16} />
-            <p>
-              支付密码仅用于验证本次购买。连续输错将锁定账号，管理员可在安全设置中重置。
-            </p>
-          </div>
+
+
         </div>
         <div className="flex justify-end gap-3 border-t border-slate-100 p-5">
           <button
@@ -4703,11 +4569,10 @@ function PurchaseModal({
             取消
           </button>
           <button
-            disabled={pin.length !== 6}
             type="submit"
             className="h-11 rounded-xl bg-[#1d3b72] px-6 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-45"
           >
-            验证并确认
+            确认
           </button>
         </div>
       </form>

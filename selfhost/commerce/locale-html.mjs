@@ -5,6 +5,10 @@ const assets = new Map([
   ['locale-operations.js', 'application/javascript'],
   ['locale.js', 'application/javascript'],
   ['locale.css', 'text/css'],
+  ['support-links.js', 'application/javascript'],
+  ['support.css', 'text/css'],
+  ['catalog-countries.css', 'text/css'],
+  ['workspace.css', 'text/css'],
 ]);
 const browserDirectory = new URL('./ui/', import.meta.url);
 const localeHead = [...assets.keys()].map(file => file.endsWith('.css')

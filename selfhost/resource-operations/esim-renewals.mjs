@@ -52,8 +52,8 @@ const schema = [
 ];
 export const renewalSchema = db => schema.map(sql => db.prepare(sql));
 
-export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, availability, wallet, check, readSecurity,
-  verifyPaymentPin, validPin, definiteFailures, supplierName, usesSupplier, priceFor, quoteBalance,
+export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, availability, wallet, check,
+  definiteFailures, supplierName, usesSupplier, priceFor, quoteBalance,
   refreshBalance, invalidateBalance, throttle = delay }) {
   const quotes = new Map();
 
@@ -125,7 +125,7 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
     }
     quotes.set(id,{id, userId:user.id, direct:usesSupplier(user), cards, issuedAt,expiresAt, single:!batch});
     return { id, cards:cards.map(publicCard), ...await quoteBalance(db,user,raw),
-      pinConfigured:Boolean(await readSecurity(db,user)), expiresAt:new Date(expiresAt).toISOString() };
+      expiresAt:new Date(expiresAt).toISOString() };
   }
 
   const readBatch = async (db,id) => (await db.prepare('SELECT * FROM esim_renewal_lines WHERE batch_id=? ORDER BY id').bind(id).all()).results;
@@ -177,8 +177,8 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
   }
 
   async function submit(user,fields) {
-    const { id,pin,code } = fields || {};
-    check(typeof id === 'string' && validBatch.test(id) && validPin(pin),400,'请填写 6 位支付密码。');
+    const { id,code } = fields || {};
+    check(typeof id === 'string' && validBatch.test(id),400,'续订编号无效。');
     const db = await dbReady();
     return serialize(async () => {
       const prior = await readBatch(db,id);
@@ -204,7 +204,6 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
           AND updated_at>=? LIMIT 1`).bind(line.resourceId,since).first();
         check(!recent && !await blocked(db,line.resourceId),409,'有 eSIM 在报价后已续费或仍待核对，请重新报价并查看续费记录。');
       }
-      await verifyPaymentPin(db,user,pin,await readSecurity(db,user));
       const amount = permitted.reduce((sum,line)=>sum+line.priceRaw,0);
       const balance = await refreshBalance();
       const cost = permitted.reduce((sum,line)=>sum+line.costRaw,0);

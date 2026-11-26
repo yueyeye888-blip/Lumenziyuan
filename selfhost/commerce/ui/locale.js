@@ -214,7 +214,8 @@
       try { localStorage.setItem(key, next); } catch {}
     }
     document.documentElement.lang = language === 'en' ? 'en' : 'zh-CN';
-    for (const button of picker?.querySelectorAll('button') || []) button.setAttribute('aria-pressed', String(button.dataset.language === language));
+    const select = picker?.querySelector('select');
+    if (select) select.value = language;
     if (started) {
       for (const root of roots) {
         if (root !== document && !root.host?.isConnected) roots.delete(root);
@@ -230,18 +231,23 @@
     picker.className = 'lumen-locale-picker';
     picker.setAttribute('role', 'group');
     picker.setAttribute('aria-label', 'Language / 语言');
-    picker.setAttribute('data-lumen-no-translate', '');
-    for (const [code, label, description] of [['en', 'EN', 'English'], ['zh', '中文', '简体中文']]) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.dataset.language = code;
-      button.textContent = label;
-      button.title = description;
-      button.setAttribute('aria-label', description);
-      button.addEventListener('click', () => updateLanguage(code, true));
-      picker.append(button);
-    }
+
+    const languageLabel = document.createElement('label');
+    languageLabel.className = 'locale-select';
+    languageLabel.setAttribute('data-lumen-no-translate','');
+    const globe = document.createElement('span');
+    globe.setAttribute('aria-hidden','true');
+    globe.className = 'locale-globe';
+    const select = document.createElement('select');
+    select.setAttribute('aria-label','Language / 语言');
+    select.add(new Option('English','en'));
+    select.add(new Option('简体中文','zh'));
+    select.value = language;
+    select.addEventListener('change', () => updateLanguage(select.value,true));
+    languageLabel.append(globe,select);
+    picker.append(languageLabel);
     document.body.append(picker);
+    window.dispatchEvent(new Event('yorke:toolbar-ready'));
   }
 
   function start() {

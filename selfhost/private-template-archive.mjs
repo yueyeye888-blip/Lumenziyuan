@@ -58,7 +58,7 @@ export function enhanceArchiveHtml(html, user) {
   return html.replace('</body>', `<script defer data-lumen-archive-loader src="${BASE}/enhance.js"></script></body>`);
 }
 
-export async function handlePrivateTemplateArchive(req, res, { root, url, user, allowedOrigins, config = {}, archiveDownloads, purchases, readBody }) {
+export async function handlePrivateTemplateArchive(req, res, { root, url, user, allowedOrigins, config = {}, archiveDownloads, readBody }) {
   if (url.pathname !== BASE && !url.pathname.startsWith(BASE + '/')) return false;
   if (!user?.email) { json(res, 401, { error: '请先登录账号' }); return true; }
   const suffix = url.pathname.slice(BASE.length);
@@ -140,7 +140,6 @@ export async function handlePrivateTemplateArchive(req, res, { root, url, user, 
       }
       let fields;
       try { fields=JSON.parse(await readBody(req,2048)); } catch { json(res,400,{error:'下载请求无效。'}); return true; }
-      await purchases.verifyPin(user,fields?.pin);
       const priceRaw = downloadPriceFor(user);
       if ((fields?.quotedPriceRaw !== undefined || user.discountBps != null) && fields?.quotedPriceRaw !== priceRaw) {
         json(res,409,{error:'售价已更新，请刷新模板库，确认金额后再下载。'}); return true;

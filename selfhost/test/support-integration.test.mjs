@@ -1,0 +1,65 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {DatabaseSync} from 'node:sqlite';
+import {createSupport} from '../commerce/support.mjs';
+import {createAddressBilling} from '../commerce/address-billing.mjs';
+import {createWallet} from '../commerce/wallet.mjs';
+
+test('ticket privacy, durable owner replies, idempotent submission and owner-only financial decisions', async t=>{
+  const db=new DatabaseSync(':memory:');t.after(()=>db.close());
+  const config={origin:'https://shop.invalid',bindings:{RESOURCE_ADMIN_EMAILS:'boss@example.invalid,staff@example.invalid'}};
+  const wallet=createWallet(db),address=createAddressBilling({db,mf:{},config,wallet});
+  const telegram = [];
+  const support=createSupport({db,config,address,
+    notify: async ticket => { telegram.push(ticket.id); },
+    readBody:async req=>Buffer.from(req.body)});
+  const handler=support.route;
+  const customer={id:'a',email:'a@example.invalid',role:'customer'},other={...customer,id:'b',email:'b@example.invalid'};
+  const boss={id:'boss',role:'employee',email:'boss@example.invalid'},staff={...boss,email:'staff@example.invalid'};
+  const route=async(user,fields,origin=config.origin,path='/__host/support')=>{
+    const req={method:fields?'POST':'GET',headers:{origin,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(fields).toString()};
+    const res={writeHead(status,headers){this.status=status;this.headers=headers;},end(body){this.body=body;}};
+    assert(await handler(req,res,new URL(path,config.origin),user));return res;
+  };
+  const reviewPath='/__host/refund-review';
+  const reviews=user=>route(user,null,config.origin,reviewPath);
+  db.prepare("INSERT INTO address_bills VALUES(?,?,?,?,?,'spent')").run('fixture','ADDR-REVIEW',customer.id,'test',Date.now());
+  db.prepare('INSERT INTO address_prepayments(bill_id,amount_raw) VALUES(?,?)').run('fixture',100000);
+  db.prepare('INSERT INTO address_refund_reviews(bill_id,reason,opened_at) VALUES(?,?,?)').run('fixture','处理失败',Date.now());
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM support_tickets').get().n,0);
+  const list=await reviews(boss);
+  assert.equal(list.status,200);
+  assert.match(list.body,/ADDR-REVIEW[\s\S]+待复核/);
+  assert.doesNotMatch(list.body,/提交工单/);
+  for (const person of [customer,staff]) assert.equal((await reviews(person)).status,403);
+  const id=randomUUID(),fields={action:'create',id,order:'ADDR-TEST',message:'<script>test</script> 付费异常'};
+  assert.equal((await route(customer,fields,'https://other.invalid')).status,403);
+  assert.equal((await route(customer,fields)).status,303);
+  assert.equal((await route(customer,fields)).status,303);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM support_tickets').get().n,1);
+  assert.doesNotMatch((await route(other)).body,/付费异常/);
+  assert.match((await route(customer)).body,/&lt;script&gt;/);
+  assert.match((await route(customer)).body,/https:\/\/t.me\/YorkeYue/);
+  assert.doesNotMatch((await route(staff)).body,/付费异常/);
+  assert.equal((await route(staff,{action:'decide',id,decision:'approved',note:'x'})).status,403);
+  assert.equal((await route(customer,{action:'reply',id,reply:'x'})).status,403);
+  assert.match((await route(boss)).body,/付费异常/);
+  assert.equal((await route(boss,{action:'reply',id,reply:'核查完成'})).status,303);
+  assert.match((await route(customer)).body,/核查完成/);
+  const api=(user,fields,query='')=>route(user,fields,config.origin,'/api/support'+query);
+  const messageId=randomUUID();
+  const message={action:'create',id:messageId,kind:'message',message:'测试客服消息'};
+  assert.equal((await api(customer,message)).status,200);
+  assert.equal((await api(customer,message)).status,200);
+  assert.equal(JSON.parse((await api(boss,null,'?summary=1')).body).unread,1);
+  assert.equal(JSON.parse((await api(other,null)).body).tickets.length,0);
+  assert.equal((await api(staff,{action:'read',id:messageId})).status,403);
+  const seen=JSON.parse((await api(boss,{action:'read',id:messageId})).body);
+  assert.equal(seen.unread,0);
+  assert.equal(seen.tickets.find(ticket=>ticket.id===messageId).kind,'message');
+  await support.flushNotifications();
+  assert.deepEqual(telegram,[id,messageId]);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM support_notifications WHERE sent_at IS NOT NULL').get().n,2);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM wallet_entries').get().n,0);
+});

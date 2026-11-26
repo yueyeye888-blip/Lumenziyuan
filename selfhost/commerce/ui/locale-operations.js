@@ -15,7 +15,7 @@ window.LumenLocaleExtra = {
   '初始密码': 'Initial password',
   '合伙人': 'Partner',
   '合伙人与额度': 'Partners & credit',
-  '合伙人与额度 · Lumen': 'Partners & credit · Lumen',
+  '合伙人与额度 · Yorke AI': 'Partners & credit · Yorke AI',
   '合伙人使用你填写的邮箱和初始密码登录。': 'The partner signs in with the email address and initial password you enter.',
   '合伙人可用余额合计': 'Total available partner balance',
   '合伙人姓名': 'Partner name',
@@ -88,7 +88,7 @@ window.LumenLocaleExtra = {
   '暂时无法读取定时检查状态': 'Scheduled check status is temporarily unavailable',
   '正在读取定时检查状态…': 'Loading scheduled check status…',
   '6 位支付密码': '6-digit payment PIN',
-  'Lumen 单号': 'Lumen order number',
+  'Yorke AI 单号': 'Yorke AI order number',
   'eSIM 续费': 'eSIM top-up',
   'eSIMAccess 供应商余额': 'eSIMAccess supplier balance',
   'eSIMAccess 订单号': 'eSIMAccess order number',
@@ -248,3 +248,26 @@ window.LumenLocaleExtraPatterns.push(
   [/^已归档 (\d+) 张 eSIM。$/, 'Archived $1 eSIMs.'],
   [/^已恢复 (\d+) 张 eSIM。$/, 'Restored $1 eSIMs.'],
 );
+
+Object.assign(window.LumenLocaleExtra, {
+  '5 天内到期': 'Expires within 5 days',
+  '5天内到期': 'Expires within 5 days',
+  '观察组': 'Watchlist',
+  '加入观察组': 'Add to watchlist',
+  '移出观察组': 'Remove from watchlist',
+  '正在更新观察组…': 'Updating watchlist…',
+  '无法更新观察组，请重试。': 'Could not update the watchlist. Please try again.',
+  '提醒关联的 eSIM 已加入观察组。': 'This eSIM is already in the watchlist.',
+  '已选中提醒对应的 eSIM，请点击「加入观察组」确认。': 'The eSIM from your reminder is selected. Confirm by clicking Add to watchlist.',
+  '未找到提醒关联的 eSIM，请确认登录账号。': 'The eSIM from the reminder could not be found. Check your signed-in account.',
+  '此 eSIM 已到期或暂时无法续订。': 'This eSIM has expired or cannot be topped up at the moment.',
+  '请勾选要加入或移出观察组的 eSIM，单次最多 10,000 张。': 'Select up to 10,000 eSIMs to add to or remove from the watchlist.',
+  '已加入观察组 1 张 eSIM。': 'Added 1 eSIM to the watchlist.',
+  '已移出观察组 1 张 eSIM。': 'Removed 1 eSIM from the watchlist.',
+});
+window.LumenLocaleExtraPatterns.push(
+  [/^已加入观察组 (\d+) 张 eSIM。$/, 'Added $1 eSIMs to the watchlist.'],
+  [/^已移出观察组 (\d+) 张 eSIM。$/, 'Removed $1 eSIMs from the watchlist.'],
+);
+
+window.LumenLocaleExtra['暂时无法读取提醒关联的 eSIM，请刷新页面。'] = 'Could not load the eSIM from this reminder. Please refresh.';

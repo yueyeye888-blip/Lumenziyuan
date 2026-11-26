@@ -64,7 +64,7 @@
     heading.textContent = '购买结果';
     const success = order.status === 'allocating' || order.status === 'ready';
     const details = node('div',undefined,'lumen-buy-summary');
-    details.append(node('strong',statuses[order.status]),node('p','Lumen 单号 ' + order.id));
+    details.append(node('strong',statuses[order.status]),node('p','Yorke AI 单号 ' + order.id));
     if (order.orderNo) details.append(node('p','eSIMAccess 订单号 ' + order.orderNo));
     if (success) details.append(node('p','订单金额 ' + money(order.amountRaw)));
     if (order.status === 'ready') details.append(node('p','二维码可在「我的购买」查看。'));
@@ -93,28 +93,24 @@
     if (order.status === 'uncertain' && order.canRetry) {
       const retry = button('重试同一订单',() => {
         const form = node('form');
-        const label = node('label','6 位支付密码','lumen-buy-pin');
-        const pin = node('input');
-        Object.assign(pin,{type:'password',inputMode:'numeric',autocomplete:'off',required:true,maxLength:6,pattern:'[0-9]{6}'});
-        label.append(pin);
         const confirm = button('确认重试同一单号',undefined,true);
         confirm.type = 'submit';
         const controls = node('div',undefined,'lumen-buy-actions');
         controls.append(confirm);
-        form.append(node('p','将按原套餐、数量和金额再次提交同一个订单号。','lumen-buy-note'),label,controls);
+        form.append(node('p','将按原套餐、数量和金额再次提交同一个订单号。','lumen-buy-note'),controls);
         feedback.before(form);
         retry.remove();
-        pin.focus();
+        confirm.focus();
         form.addEventListener('submit',async event => {
           event.preventDefault();
           if (confirm.disabled || !form.reportValidity()) return;
           frame.busy(true);
           confirm.disabled = true;
           try {
-            const {order:current} = await request('purchases',{id:order.id,pin:pin.value,retry:true});
+            const {order:current} = await request('purchases',{id:order.id,retry:true});
             showStatus(frame,current,beforeClose);
           } catch(error) { feedback.textContent=error.message; }
-          finally { pin.value=''; confirm.disabled=false; frame.busy(false); }
+          finally { confirm.disabled=false; frame.busy(false); }
         });
       });
       actions.prepend(retry);
@@ -177,11 +173,6 @@
     const amount = node('strong','');
     const unitCount = node('p','');
     summary.append(amount,unitCount,node('p',paymentSource(quote) + '可用 ' + money(quote.availableRaw)));
-    const label = node('label','6 位支付密码','lumen-buy-pin');
-    const pin = node('input');
-    Object.assign(pin,{type:'password',inputMode:'numeric',autocomplete:'off',maxLength:6,required:true,pattern:'[0-9]{6}'});
-    pin.placeholder = '请输入支付密码';
-    label.append(pin);
     const actions = node('div',undefined,'lumen-buy-actions');
     const submit = button('确认并下单',undefined,true);
     submit.type = 'submit';
@@ -189,11 +180,7 @@
     actions.append(cancel,submit);
     form.append(list,summary);
     const warning = node('p',quote.paymentSource === 'supplier' ? '确认后按供应商原价从 eSIMAccess 账户余额结算。' : '确认后从站内钱包扣款，由 eSIMAccess 创建订单。','lumen-buy-note');
-    if (quote.pinConfigured) form.append(label,warning);
-    else {
-      form.append(node('p','请先设置支付密码，再回来确认购买。','lumen-buy-note'));
-      actions.append(button('去设置支付密码',() => window.location.assign('/__host/security')));
-    }
+    form.append(warning);
     form.append(feedback,actions);
     feedback.textContent = '';
     content.replaceChildren(form);
@@ -207,7 +194,7 @@
       amount.textContent = valid ? '合计 ' + money(total) : '请核对购买数量';
       unitCount.textContent = valid ? count + ' 张 eSIM' : '每单合计最多 ' + quote.maxCards + ' 张';
       feedback.textContent = valid && total > quote.availableRaw ? paymentSource(quote) + '余额不足。' : '';
-      submit.disabled = !valid || !quote.pinConfigured || total > quote.availableRaw || busy || blocked;
+      submit.disabled = !valid || total > quote.availableRaw || busy || blocked;
       return valid && total <= quote.availableRaw;
     };
     list.addEventListener('input',checkTotal);
@@ -215,17 +202,16 @@
     form.addEventListener('submit',async event => {
       event.preventDefault();
       if (busy || blocked || !checkTotal() || !form.reportValidity()) return;
-      const data = { id:requestId,pin:pin.value,items:quote.lines.map(({id,priceRaw},index) => ({id,priceRaw,count:countFields[index].valueAsNumber})) };
+      const data = { id:requestId,items:quote.lines.map(({id,priceRaw},index) => ({id,priceRaw,count:countFields[index].valueAsNumber})) };
       busy = true;
       frame.busy(true);
-      cancel.disabled = submit.disabled = pin.disabled = true;
+      cancel.disabled = submit.disabled = true;
       countFields.forEach(field => { field.disabled = true; });
       feedback.textContent = '正在提交到 eSIMAccess…';
       try {
         const {order} = await request('purchases',data);
         showStatus(frame,order,selection.accepted);
       } catch(error) {
-        pin.value = '';
         if (error.status && error.status < 500) {
           feedback.textContent = error.message;
           if (error.status === 409 || error.status === 402) {
@@ -251,11 +237,9 @@
           actions.append(followUp);
         }
       } finally {
-        delete data.pin;
-        pin.value = '';
         busy = false;
         frame.busy(false);
-        cancel.disabled = pin.disabled = false;
+        cancel.disabled = false;
         countFields.forEach(field => { field.disabled = false; });
         submit.disabled = blocked;
       }
@@ -289,7 +273,7 @@
           article.append(node('strong',statuses[order.status]),
             node('p',time.format(new Date(order.createdAt))+' · '+order.account),
             node('p',order.items.map(item=>item.name+' × '+item.count).join('，')),
-            node('p','Lumen 单号 '+order.id));
+            node('p','Yorke AI 单号 '+order.id));
           if (order.orderNo) article.append(node('p','eSIMAccess 订单号 '+order.orderNo+' · '+money(order.amountRaw)));
           if (order.error) article.append(node('p',order.error,'lumen-buy-feedback'));
           if (order.status === 'uncertain') {
@@ -422,25 +406,17 @@
     if (quote.cards.length > rows.length) summary.append(node('p',quote.cards.length-rows.length+' 张无法续费，实际提交 '+rows.length+' 张。'));
     form.append(summary);
     feedback.textContent='';
-    if (!rows.length || !quote.pinConfigured) {
-      if (rows.length) {
-        feedback.textContent='请先设置 6 位支付密码。';
-        const setup=node('a','设置支付密码'); setup.href='/__host/security'; feedback.append(' ',setup);
-      }
+    if (!rows.length) {
       const total=rows.reduce((price,card)=>price+card.options[0].priceRaw,0);
       amount.textContent='应付 '+money(total);
       content.replaceChildren(form,feedback);
       return;
     }
-    const pinLabel=node('label','6 位支付密码','lumen-buy-pin');
-    const pin=node('input');
-    Object.assign(pin,{type:'password',inputMode:'numeric',autocomplete:'off',required:true,maxLength:6,pattern:'[0-9]{6}'});
-    pinLabel.append(pin);
     const actions=node('div',undefined,'lumen-buy-actions');
     const submit=button('确认续费',undefined,true);
     submit.type='submit';
     actions.append(submit);
-    form.append(pinLabel,node('p',quote.paymentSource === 'supplier' ? '确认后按供应商原价从 eSIMAccess 账户余额结算。' : '确认后从站内钱包扣款，按每张卡的供应商回执显示结果。','lumen-buy-note'),feedback,actions);
+    form.append(node('p',quote.paymentSource === 'supplier' ? '确认后按供应商原价从 eSIMAccess 账户余额结算。' : '确认后从站内钱包扣款，按每张卡的供应商回执显示结果。','lumen-buy-note'),feedback,actions);
     content.replaceChildren(form);
     let busy=false;
     function validate() {
@@ -457,19 +433,18 @@
       if (busy || submit.disabled || !form.reportValidity()) return;
       busy=true;
       frame.busy(true);
-      submit.disabled=choose.disabled=pin.disabled=true;
+      submit.disabled=choose.disabled=true;
       feedback.textContent='正在提交续费…';
       try {
-        const result=await request('renewals',{id:quote.id,pin:pin.value,code:single?choose.value:undefined});
+        const result=await request('renewals',{id:quote.id,code:single?choose.value:undefined});
         renewalResult(frame,quote.id,result.records);
       } catch(error) {
         if (!error.status || error.status>=500) renewalResult(frame,quote.id);
         else feedback.textContent=error.message;
       } finally {
-        pin.value='';
         busy=false;
         frame.busy(false);
-        submit.disabled=choose.disabled=pin.disabled=false;
+        submit.disabled=choose.disabled=false;
       }
     });
   }

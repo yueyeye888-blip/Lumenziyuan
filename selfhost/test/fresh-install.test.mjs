@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -51,6 +51,10 @@ test('new server initializes and serves the complete release using only runtime 
     assert.equal(cert.status,0,cert.error?.message || cert.stderr);
     const initialized=spawnSync(process.execPath,['initialize.mjs'],{cwd:root,encoding:'utf8',timeout:22_000});
     assert.equal(initialized.status,0,initialized.error?.message || initialized.stderr);
+    const introPath='/api/supplier-templates?introduction=11315';
+    writeFileSync(join(root,'data/supplier-template-introductions.json'),JSON.stringify({
+      items:[{publicId:11315,institution:'Fixture institution',summary:'Offline official description',contentItems:['Example field']}],
+    }));
     const reinit=spawnSync(process.execPath,['initialize.mjs'],{cwd:root,encoding:'utf8',timeout:4000});
     assert.notEqual(reinit.status,0);
     const customerEmail='public-buyer@example.invalid', customerPassword=randomBytes(24).toString('base64url');
@@ -133,15 +137,36 @@ test('new server initializes and serves the complete release using only runtime 
     assert.equal(customerLogin.headers.location,'/');
     const buyerCookie=customerLogin.headers['set-cookie'][0].split(';')[0];
     const buyer=path=>call(port,path,{cookie:buyerCookie});
+    const previewDirectory = join(root,'dist','client','yorke-previews');
+    mkdirSync(previewDirectory,{recursive:true});
+    const samplePath = '/yorke-previews/addr-999999.webp';
+    writeFileSync(join(previewDirectory,'addr-999999.webp'),'preview fixture');
+    assert.equal((await call(port,samplePath)).status,303);
+    assert.equal((await buyer(samplePath)).body,'preview fixture');
+    const previewHead = await call(port,samplePath,{cookie:buyerCookie,method:'HEAD'});
+    assert.equal(previewHead.status,200);
+    assert.equal(previewHead.headers['content-type'],'image/webp');
+    assert.equal(previewHead.body,'');
+    assert.equal((await buyer('/yorke-previews/addr-999998.webp')).status,404);
+    assert.equal((await call(port,introPath)).status,401);
+    assert.equal((await buyer('/api/supplier-templates?introduction=invalid')).status,400);
+    const details=await buyer(introPath);
+    assert.equal(details.status,200);
+    assert.deepEqual(JSON.parse(details.body),{
+      id:11315, summary:'Offline official description', facts:[['机构/服务名称','Fixture institution']],
+      contentItems:['Example field'], note:'',
+    });
     const customerHome=await buyer('/');
     assert.equal(customerHome.status,200);
     assert.match(customerHome.body,/\/__host\/commerce-bridge\.js/);
     assert.equal((await buyer('/?section=wallet&action=recharge')).status,200);
     assert.equal((await buyer('/__host/shop?section=wallet&action=recharge')).headers.location,'/?section=wallet&action=recharge');
     assert.equal((await buyer('/__host/shop')).headers.location,'/');
-    for(const path of ['/__host/wallet','/__host/security','/__host/commerce.js','/__host/commerce.css','/favicon.svg','/mail-delivery','/api/supplier-templates','/__host/template-archive','/__host/template-archive/app.js','/__host/template-archive/enhance.js']) {
+    for(const path of ['/__host/wallet','/__host/commerce.js','/__host/commerce.css','/favicon.svg','/mail-delivery','/api/supplier-templates','/__host/template-archive','/__host/template-archive/app.js','/__host/template-archive/enhance.js']) {
       assert.equal((await buyer(path)).status,200,path);
     }
+    assert.equal((await buyer('/__host/security')).headers.location,'/__host/wallet');
+    assert.equal((await buyer('/api/settings/security')).status,410);
     const viewer=JSON.parse((await buyer('/api/session')).body).viewer;
     assert.equal(viewer.role,'customer');
     assert.equal(viewer.isAdmin,false);

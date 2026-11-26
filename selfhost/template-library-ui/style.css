@@ -56,3 +56,7 @@
 .archive-payment a { font-size: 13px; color: #1e49bd; }
 .archive-payment .payment-actions { display: flex; justify-content: flex-end; gap: 9px; border-top: 1px solid #e6ebf2; }
 .archive-payment .button { min-height: 42px; font-size: 14px; }
+main .filters {padding:14px;background:#fff;border:1px solid #d8e2dc;border-radius:12px}
+main .card {border-color:#d3ded6;border-radius:13px;background:#fff;box-shadow:0 3px 8px #25402d0c}
+main .card:hover {border-color:#80a58b}
+main .card .button:not(.secondary) {background:#214c40;border-color:#214c40;color:white}

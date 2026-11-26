@@ -1,3 +1,4 @@
+import { createSupport } from './support.mjs';
 import { withLocale } from './locale-html.mjs';
 import { canManageAccounts } from '../resource-operations/account-access.mjs';
 import { readFileSync, existsSync } from 'node:fs';
@@ -36,22 +37,22 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
   const admin = (u) => u.role !== 'customer' && admins.has(u.email.toLowerCase());
   const origins = new Set([config.origin, ...(config.aliasOrigins || [])]);
   const address = createAddressBilling({ db, mf, wallet, config });
+  const support = createSupport({db,config,readBody,address});
   const warehouse = createWarehouse({
     wallet,
     db,
     mf,
     config,
     outlook,
-    verifyPin: (u, p) => purchases.verifyPin(u, p),
   });
   async function route(req, res, url, user) {
     const path = url.pathname;
+    if (await support.route(req,res,url,user)) return true;
     if (await warehouse.route(req, res, url, user)) return true;
     if (path === '/__host/payment-review' && !admin(user)) return json(res, 403, { error: '仅管理员可核对转账。' });
     const asset = {
       '/__host/shop': 'store.html',
       '/__host/wallet': 'store.html',
-      '/__host/security': 'store.html',
       '/__host/payment-review': 'store.html',
       '/__host/commerce.css': 'style.css',
       '/__host/commerce.js': 'store.js',
@@ -211,7 +212,6 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
       }
       if (path === addressPost && req.method === 'POST') {
         const data = await fields(8192);
-        await purchases.verifyPin(user, data.pin);
         const reply = await address.submit(
           user,
           req.headers['idempotency-key'],
@@ -230,7 +230,9 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
   }
   return {
     route,
+    reviewFailure: address.reviewFailure,
     async sync() {
+      void support.flushNotifications().catch(() => console.warn('Support notifications deferred'));
       await Promise.all([address.sync(), warehouse.recover?.()]);
     },
   };

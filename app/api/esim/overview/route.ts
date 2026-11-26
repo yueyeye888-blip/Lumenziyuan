@@ -56,6 +56,7 @@ export async function GET() {
           smdpStatus: profile.smdpStatus,
           totalVolume: profile.totalVolume || 0,
           orderUsage: profile.orderUsage || 0,
+          usageReported: typeof profile.orderUsage === "number" && Number.isFinite(profile.orderUsage) && profile.orderUsage >= 0,
           expiredTime: profile.expiredTime || null,
           totalDuration: profile.totalDuration || profile.packageList?.[0]?.duration || null,
           durationUnit: profile.durationUnit || "DAY",

@@ -58,11 +58,6 @@ test(
             for await (const c of r) a.push(c);
             return Buffer.concat(a);
           },
-          purchases: {
-            verifyPin: async (_u, pin) => {
-              if (pin !== '123456') throw Object.assign(Error('invalid PIN'), { status: 403 });
-            },
-          },
         });
       } catch (error) {
         res.writeHead(500).end(String(error));
@@ -74,11 +69,11 @@ test(
     const base = '/__host/template-archive',
       path = base + '/files/' + item.id;
     const req = (p, opts) => fetch(url + p, opts);
-    const authorize = (id, pin = '123456', account = 'employee', quotedPriceRaw) =>
+    const authorize = (id, account = 'employee', quotedPriceRaw) =>
       req(path + '/authorize', {
         method: 'POST',
         headers: { Origin: origin, 'content-type': 'application/json', 'x-user': account },
-        body: JSON.stringify({ requestId: id, pin, quotedPriceRaw }),
+        body: JSON.stringify({ requestId: id, quotedPriceRaw }),
       });
     try {
       assert.equal((await req(base + '/catalog')).status, 200);
@@ -93,9 +88,9 @@ test(
       assert.equal((await req(path, {
         method:'PUT', headers:{ Origin:origin, 'x-user':'customer', 'x-lumen-archive-upload':'1' },
       })).status,403);
-      assert.equal((await authorize(randomUUID(),'123456','customer')).status,402);
+      assert.equal((await authorize(randomUUID(),'customer')).status,402);
       wallet.credit({ userId:'customer', reference:'seed-customer', amountRaw:downloadPriceRaw });
-      const publicReceipt=await (await authorize(randomUUID(),'123456','customer',downloadPriceRaw)).json();
+      const publicReceipt=await (await authorize(randomUUID(),'customer',downloadPriceRaw)).json();
       assert.ok(publicReceipt.downloadPath);
       assert.equal((await req(publicReceipt.downloadPath, { headers:{'x-user':'employee'} })).status,403);
       const publicDownload=await req(publicReceipt.downloadPath, { headers:{'x-user':'customer'} });
@@ -106,15 +101,14 @@ test(
       const agentPrice=(await (await preview('agent')).json()).priceRaw;
       assert.equal(agentPrice,downloadPriceRaw * 0.8);
       wallet.credit({ userId:'agent', reference:'seed-agent', amountRaw:agentPrice });
-      assert.equal((await authorize(randomUUID(),'123456','agent',downloadPriceRaw)).status,409);
-      const agentReceipt=await (await authorize(randomUUID(),'123456','agent',agentPrice)).json();
+      assert.equal((await authorize(randomUUID(),'agent',downloadPriceRaw)).status,409);
+      const agentReceipt=await (await authorize(randomUUID(),'agent',agentPrice)).json();
       const agentDownload=await req(agentReceipt.downloadPath, { headers:{'x-user':'agent'} });
       assert.equal(agentDownload.status,200);
       assert.deepEqual(Buffer.from(await agentDownload.arrayBuffer()),bytes);
       assert.equal(wallet.balance('agent'),0);
       assert.equal((await authorize(randomUUID())).status, 402);
       wallet.credit({ userId: 'employee', reference: 'seed', amountRaw: downloadPriceRaw * 2 });
-      assert.equal((await authorize(randomUUID(), '000000')).status, 403);
       const id = randomUUID();
       const { downloadPath: ticket } = await (await authorize(id)).json();
       assert.ok(ticket);

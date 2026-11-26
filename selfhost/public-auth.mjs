@@ -281,14 +281,14 @@ const scriptHash = createHash('sha256').update(authScript).digest('base64');
 function page(res, status, title, content) {
   res.writeHead(status, {
     'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'same-origin',
-    'content-security-policy':`default-src 'none'; script-src 'self' 'sha256-${scriptHash}'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,
+    'content-security-policy':`default-src 'none'; script-src 'self' 'sha256-${scriptHash}'; style-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,
   });
   res.end(withLocale(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>${title} · Lumen 资源中心</title><style>${styles}</style></head><body>
-    <header><div class="masthead"><a class="brand" aria-label="Lumen 资源中心首页" href="/"><span class="mark" aria-hidden="true">L</span>Lumen<small>资源中心</small></a></div></header>
+    <title>${title} · Yorke AI 资源中心</title><style>${styles}</style></head><body>
+    <header><div class="masthead"><a class="brand" aria-label="Yorke AI 资源中心首页" href="/"><span class="mark" aria-hidden="true">Y</span>Yorke AI<small>资源中心</small></a></div></header>
     <main><div class="auth-layout">
       <div class="welcome" aria-hidden="true">
-        <span class="welcome-name">Lumen 资源中心</span>
+        <span class="welcome-name">Yorke AI 资源中心</span>
         <p class="welcome-heading"><span>选购资源</span><span>管理余额与订单</span></p>
         <div class="orbit"><span></span></div>
       </div>
@@ -318,7 +318,7 @@ function passwordInput(isNew, label) {
 }
 
 export function login(res, destination, error='', passwordChanged=false) {
-  page(res,200,'登录账号',`<p class="lead">使用账号邮箱登录 Lumen 资源中心。</p>
+  page(res,200,'登录账号',`<p class="lead">使用账号邮箱登录 Yorke AI 资源中心。</p>
     ${notice(error,passwordChanged?'登录密码已更新，请使用新密码登录。':'')}
     <form method="post" action="/__host/login" autocomplete="off" data-fresh-login><input type="hidden" name="returnTo" value="${escape(destination)}">
     <div class="fields">${emailInput()}${passwordInput(false,'登录密码')}</div><button class="primary">登录</button></form>

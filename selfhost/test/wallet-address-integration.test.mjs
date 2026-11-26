@@ -43,13 +43,13 @@ test('wallet atomically limits combined pending purchases and works on Node with
   raw.close();
 });
 
-test('packaged Worker validates the billed order reference; a failed prepaid order refunds 10 U once', async () => {
+test('packaged Worker validates the billed order reference; a failed prepaid order requires owner review', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'lumen-billing-'));
   await symlink(path.join(source, 'dist'), path.join(root, 'dist'), 'dir');
   await mkdir(path.join(root, 'data'));
   const config = {
     origin: 'https://billing.invalid',
-    bindings: { ADDRESS_ORDER_CALLBACK_TOKEN: 'fixture-token' },
+    bindings: { ADDRESS_ORDER_CALLBACK_TOKEN: 'fixture-token', RESOURCE_ADMIN_EMAILS:'boss@example.invalid' },
     siteOrderQueueDirectory: path.join(root, 'queue'),
   };
   const mf = worker(root, config);
@@ -73,6 +73,7 @@ test('packaged Worker validates the billed order reference; a failed prepaid ord
     assert.equal(templates.status, 200);
     const { id, name } = (await templates.json()).items[0];
     const payload = Buffer.from(JSON.stringify({ template: { id, name }, profile }));
+    const owner={id:'boss',email:'boss@example.invalid',role:'employee'};
     const bill = createAddressBilling({ db, mf, wallet, config });
     await assert.rejects(bill.submit(user, randomUUID(), payload), { status: 402 });
     const unsigned = await mf.dispatchFetch(config.origin + '/api/personal-details/submit', {
@@ -90,9 +91,11 @@ test('packaged Worker validates the billed order reference; a failed prepaid ord
         .status,
       'failed'
     );
-    assert.equal(wallet.balance(user.id), 100000);
+    assert.equal(wallet.balance(user.id), 0);
+    await bill.decideRefund(owner,'address:'+key,'approved','确认异常');
+    assert.equal(wallet.balance(user.id),100000);
     assert.equal(wallet.snapshot(user.id).heldRaw, 0);
-    assert.equal(result.data.paymentStatus,'refunded');
+    assert.equal(result.data.paymentStatus,'review');
     assert.equal(wallet.snapshot(user.id).entries.filter(e=>e.reference.startsWith('refund:')).length,1);
     assert.equal((await bill.submit(user, key, payload)).data.requestNo, result.data.requestNo);
     assert.equal((await d1.prepare('SELECT COUNT(*) n FROM address_orders').first()).n, 1);
@@ -119,19 +122,22 @@ test('packaged Worker validates the billed order reference; a failed prepaid ord
       .bind('legacy', legacy, result.data.requestNo)
       .run();
     assert.equal((await callback(legacy, 'delivered')).status, 200);
+    const invalidKey = randomUUID();
     const invalid = await bill.submit(
       user,
-      randomUUID(),
+      invalidKey,
       Buffer.from(JSON.stringify({ template: { id: 999999, name: 'unknown' }, profile }))
     );
     assert.equal(invalid.status, 400);
+    await bill.decideRefund(owner,'address:'+invalidKey,'approved','确认入账');
     assert.equal(wallet.balance(user.id), 100000);
     const agent = {...user, discountBps:8000};
     await assert.rejects(bill.submit(agent,randomUUID(),payload,100000),{status:409});
     const agentKey = randomUUID();
     const discounted = await bill.submit(agent,agentKey,payload,80000);
     assert.equal(discounted.data.paidAmountRaw,80000);
-    assert.equal(discounted.data.paymentStatus,'refunded');
+    assert.equal(discounted.data.paymentStatus,'review');
+    await bill.decideRefund(owner,'address:'+agentKey,'approved','确认异常');
     assert.equal(wallet.balance(user.id),100000);
     assert.equal(wallet.snapshot(user.id).entries.find(e=>e.reference==='refund:address:'+agentKey).delta,80000);
     assert.equal((await bill.submit({...agent,discountBps:7500},agentKey,payload,75000)).data.paidAmountRaw,80000);
@@ -163,6 +169,7 @@ test('restart recovers one acknowledged queue file, charges once before generati
             run: async () => {
               assert.ok(sql.includes('status_message'));
               orders.get(args[2]).message = args[0];
+              if (sql.includes("SET status='failed'")) orders.get(args[2]).status='failed';
             },
           };
         },
@@ -218,7 +225,7 @@ test('restart recovers one acknowledged queue file, charges once before generati
     now += 11 * 60_000;
     await make().sync();
     const ref = db.prepare('SELECT request_no FROM address_bills WHERE id=?').get('address:' + key).request_no;
-    assert.match(orders.get(ref).message, /管理员核对/);
+    assert.match(orders.get(ref).message, /人工复核/);
     assert.equal(existsSync(path.join(root, ref, 'pending.json')), false);
     assert.equal((await restarted.submit(user, key, payload)).data.requestNo, ref);
     assert.equal(dispatches, 2);
@@ -231,8 +238,8 @@ test('restart recovers one acknowledged queue file, charges once before generati
       db.prepare("INSERT INTO address_bills VALUES(?,?,?,?,?,'held')").run(id,reference,owner,'old-hash',now);
       orders.set(reference,{status,user:owner});
       await make().sync();
-      assert.equal(wallet.snapshot(owner).heldRaw,0);
-      assert.equal(wallet.balance(owner),status==='failed'?addressPriceRaw:0);
+      assert.equal(wallet.snapshot(owner).heldRaw,status==='failed'?addressPriceRaw:0);
+      assert.equal(wallet.balance(owner),0);
       assert.equal(wallet.snapshot(owner).entries.length,status==='failed'?1:2);
     }
   } finally {

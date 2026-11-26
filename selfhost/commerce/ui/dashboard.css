@@ -485,6 +485,19 @@ main[data-lumen-wallet-view] > header > :has(> input) { visibility: hidden; }
   background: #eef3fb;
 }
 
+.lumen-esim-group-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.lumen-esim-watch-badge {
+  display: inline-block;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: #f0ebfc;
+  color: #62479c;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .lumen-esim-archive-toolbar button:disabled { cursor: not-allowed; opacity: .58; }
 .lumen-esim-archive-toolbar button:focus-visible { outline: 2px solid #315c9f; outline-offset: 2px; }
 .lumen-esim-archive-feedback { flex-basis: 100%; color: #344d73; font-size: 13px; }

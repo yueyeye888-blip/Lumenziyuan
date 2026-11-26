@@ -42,8 +42,8 @@ export async function sendWarehouseDelivery(input: {
 
   return submitMail(`lumen-warehouse/${input.claimId}`, {
     to: input.recipientEmail,
-    subject: `Lumen 资源交付 · ${input.items.length} 项资源`,
-    text: `你已在 Lumen 资源申购中心认领 ${input.items.length} 项资源。\n\n${plainItems}\n\n请妥善保管敏感信息。`,
-    html: `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#172033"><h2 style="color:#1d3b72">Lumen 资源交付</h2><p>你已认领 <strong>${input.items.length}</strong> 项资源，详情如下：</p>${htmlItems}<p style="font-size:12px;color:#8a94a6">该邮件包含敏感交付信息，请勿转发。</p></div>`,
+    subject: `Yorke AI 资源交付 · ${input.items.length} 项资源`,
+    text: `你已在 Yorke AI 资源申购中心认领 ${input.items.length} 项资源。\n\n${plainItems}\n\n请妥善保管敏感信息。`,
+    html: `<div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#172033"><h2 style="color:#1d3b72">Yorke AI 资源交付</h2><p>你已认领 <strong>${input.items.length}</strong> 项资源，详情如下：</p>${htmlItems}<p style="font-size:12px;color:#8a94a6">该邮件包含敏感交付信息，请勿转发。</p></div>`,
   });
 }

@@ -137,15 +137,6 @@ function ask(title, fields) {
     d.showModal();
   });
 }
-const pinField = () =>
-  inputField('六位支付密码', 'pin', {
-    type: 'password',
-    required: true,
-    inputMode: 'numeric',
-    pattern: '[0-9]{6}',
-    maxLength: 6,
-    autocomplete: 'off',
-  });
 function keyFor(name) {
   let k = sessionStorage.getItem('lumen:' + name);
   if (!k) {
@@ -235,6 +226,7 @@ document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => $(b.
 async function loadWallet() {
   wallet = await api('/api/commerce/wallet');
   $('account').textContent = wallet.email;
+  $('refund-admin-link').hidden = !wallet.canManageAccounts;
   $('staff-admin-link').hidden = !wallet.canManageAccounts;
   $('review-link').hidden = wallet.role !== 'admin';
   const rechargeAllowed = wallet.role !== 'employee';
@@ -386,11 +378,6 @@ form('deposit-form', async ({ network, customAmount }) => {
   selectHistory('deposits');
   await loadDeposits();
 });
-form('pin-form', async (f, el) => {
-  await api('/api/settings/security', f);
-  el.reset();
-  message('支付密码已更新。');
-});
 async function admin() {
   const r = await api('/api/commerce/admin/deposits');
   $('health').textContent = r.health
@@ -481,12 +468,6 @@ $('next').onclick = () =>
       await catalog();
     }
   });
-async function needsPin(quote) {
-  if (quote.pinConfigured !== false) return false;
-  const next = await ask('设置支付密码', [elem('p', '购买前请先为账户设置六位支付密码。')]);
-  if (next) location.assign('/__host/security');
-  return true;
-}
 function esimFunding(quote) {
   return quote.paymentSource === 'supplier'
     ? '按 eSIMAccess 原价结算 · 供应商可用余额 '+dollars.format(quote.availableRaw/10000)
@@ -495,7 +476,6 @@ function esimFunding(quote) {
 async function buy(p) {
   const q = await api('/api/esim/purchase-quote', { ids: [p.id] });
   if (q.pending) throw Error('你有一笔订单正在核对，请查看我的订单。');
-  if (await needsPin(q)) return;
   const line = q.lines[0];
   const count = inputField('数量', 'count', {
     type: 'number',
@@ -513,7 +493,6 @@ async function buy(p) {
     elem('p', esimFunding(q)),
     count,
     total,
-    pinField(),
   ]);
   if (!f) return;
   const k = 'esim:' + p.id + ':' + f.count;
@@ -521,7 +500,6 @@ async function buy(p) {
   try {
     r = await api('/api/esim/purchases', {
       id: 'LH-' + keyFor(k),
-      pin: f.pin,
       items: [{ id: p.id, count: Number(f.count), priceRaw: line.priceRaw }],
     });
   } catch (e) {
@@ -561,11 +539,10 @@ async function ordersDetail(o) {
 }
 async function renew(c) {
   const q = await api('/api/esim/renewal-quote', { ids: [c.resourceId] });
-  if (await needsPin(q)) return;
   const card = q.cards?.[0];
   if (!card?.options?.length) throw Error(card?.reason || '当前没有可续费方案。');
   const opts = card.options.map((x) => [x.code, x.name + ' · ' + money(x.priceRaw)]);
-  const f = await ask('续费 · ' + c.name, [elem('p', esimFunding(q)), inputField('续费套餐', 'code', { options: opts }), pinField()]);
+  const f = await ask('续费 · ' + c.name, [elem('p', esimFunding(q)), inputField('续费套餐', 'code', { options: opts })]);
   if (!f) return;
   await api('/api/esim/renewals', { id: q.id, ...f });
   message('续费已提交，结果可在我的订单中查看。');
@@ -642,7 +619,7 @@ form('address-form', async (f, el) => {
   try {
     r = await api(
       '/api/personal-details/submit',
-      { profile, template: { id: t.id, name: t.name }, pin: f.pin, quotedPriceRaw: wallet.priceAddressRaw },
+      { profile, template: { id: t.id, name: t.name }, quotedPriceRaw: wallet.priceAddressRaw },
       { 'idempotency-key': keyFor(k) },
     );
   } catch (e) {
@@ -656,7 +633,7 @@ form('address-form', async (f, el) => {
   const receipt =
     r.paymentStatus === 'refunded'
       ? '订单未完成，' + paid + ' 已退回余额。'
-      : r.paymentStatus === 'reserved'
+      : r.paymentStatus === 'review' ? '订单异常，已转人工复核。' : r.paymentStatus === 'reserved'
         ? '原订单已预留 ' + paid + '。'
         : '已支付 ' + paid + '。';
   message(receipt + '订单号 ' + r.requestNo);
@@ -669,17 +646,16 @@ async function digest(t) {
 }
 (async () => {
   try {
-    const title = { shop: '资源市场', wallet: '我的钱包', security: '支付密码', 'payment-review': '收款核对' }[
+    const title = { shop: '资源市场', wallet: '我的钱包', 'payment-review': '收款核对' }[
       view
     ];
     $('title').textContent = title;
     $('page-intro').textContent = {
       shop: '浏览资源、下单和管理购买记录。',
       wallet: '查看可用余额和账户流水。',
-      security: '设置六位支付密码，用于确认购买和下载。',
       'payment-review': '查看收款网络和需要人工核对的转账。',
     }[view];
-    document.title = title + ' · Lumen';
+    document.title = title + ' · Yorke AI';
     document.body.dataset.view = view;
     if (embedded) {
       document.body.classList.add('embedded-wallet');

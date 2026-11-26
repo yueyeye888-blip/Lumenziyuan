@@ -126,21 +126,26 @@ export function registrationStore({ db, config, byEmail, insertCustomer, replace
   };
 }
 
-const customerGet = new Set(['/api/esim/packages','/api/esim/purchases','/api/esim/purchase-cards','/api/esim/renewals','/api/settings/security']);
-const customerPost = new Set(['/api/esim/purchase-quote','/api/esim/purchases','/api/settings/security','/api/esim/renewal-quote','/api/esim/renewals']);
+const customerGet = new Set(['/api/esim/packages','/api/esim/purchases','/api/esim/purchase-cards','/api/esim/renewals']);
+const customerPost = new Set(['/api/esim/purchase-quote','/api/esim/purchases','/api/esim/renewal-quote','/api/esim/renewals']);
 export function customerEsimRoute(method, pathname) {
   return method === 'GET' && customerGet.has(pathname) || method === 'POST' && customerPost.has(pathname);
 }
 
 const customerWorkbenchPost = new Set([
-  '/api/esim/archive', '/api/esim/export', '/api/esim/email', '/api/warehouse/resend', '/api/resources/status',
+  '/api/esim/archive', '/api/esim/watch', '/api/esim/export', '/api/esim/email', '/api/warehouse/resend', '/api/resources/status',
 ]);
 const customerWorkbenchGet = new Set([
   '/', '/favicon.svg', '/mail-delivery', '/api/session', '/api/esim/overview',
   '/api/mail-deliveries', '/api/supplier-templates', '/api/addresses/normalize',
   '/__host/esim-checkout.js', '/__host/esim-checkout.css', '/__host/resource-operations.js',
 ]);
+export function isBrandedTemplatePreview(pathname) {
+  return /^\/yorke-previews\/(?:addr|windx)-[1-9]\d*\.webp$/.test(pathname);
+}
+
 export function customerWorkbenchRoute(method, pathname) {
+  if (isBrandedTemplatePreview(pathname)) return method === 'GET' || method === 'HEAD';
   if (method === 'POST') return customerWorkbenchPost.has(pathname);
   if (method !== 'GET') return false;
   return customerWorkbenchGet.has(pathname)

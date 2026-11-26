@@ -10,7 +10,6 @@ export type MarketTableOptions = {
   favoriteIds: string[];
   toggleFavorite: (id: string) => void;
   resetQuery: () => void;
-  openSecurity: () => void;
 };
 
 type MarketTableBinding = {

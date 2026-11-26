@@ -17,7 +17,7 @@ import { worker } from './runtime.mjs';
 import { createOutlookMail } from './outlook-mail.mjs';
 import { trustedHeaders, verifyPassword, safeReturn } from './auth.mjs';
 import { login, registrationPage } from './public-auth.mjs';
-import { clientAddress, customerEsimRoute, customerWorkbenchRoute, reservedPublicEmail } from './registration.mjs';
+import { clientAddress, customerEsimRoute, isBrandedTemplatePreview, customerWorkbenchRoute, reservedPublicEmail } from './registration.mjs';
 import { viewerFor } from './resource-operations/account-access.mjs';
 import { callbackAuthorized } from './site-order-queue.mjs';
 import { handlePrivateTemplateArchive, enhanceArchiveHtml } from './private-template-archive.mjs';
@@ -53,7 +53,7 @@ const commerceTimer=setInterval(reconcileCommerce,30_000);
 const operations = makeResourceOperations({ root, config, mf, identities, readBody: body, outlook, purchases, wallet });
 function returnPath(value) {
   const clean = safeReturn(value);
-  const permitted = /^\/__host\/(?:accounts|wallet|shop|security|payment-review|template-archive\/?)(?:\?|$)/;
+  const permitted = /^\/__host\/(?:accounts|wallet|shop|support|refund-review|payment-review|template-archive\/?)(?:\?|$)/;
   if (clean === '/' && typeof value === 'string' && permitted.test(value) && !/[\\\r\n]/.test(value)) {
     return value;
   }
@@ -65,7 +65,7 @@ function customerDestination(url) {
     if (params.get('section') !== 'wallet') return '/';
     return '/?section=wallet' + (params.get('action') === 'recharge' ? '&action=recharge' : '');
   }
-  const pages = new Set(['/','/__host/wallet','/__host/security','/__host/template-archive','/__host/template-archive/','/mail-delivery']);
+  const pages = new Set(['/','/__host/support','/__host/wallet','/__host/template-archive','/__host/template-archive/','/mail-delivery']);
   const orderPage = url.pathname.startsWith('/address-orders/') && customerWorkbenchRoute('GET',url.pathname);
   return pages.has(url.pathname) || orderPage ? url.pathname + url.search : '/';
 }
@@ -87,13 +87,19 @@ const server = https.createServer(tls, async (req, res) => {
     const allowedOrigins = new Set([origin, ...(config.aliasOrigins || [])]);
     if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin && !allowedOrigins.has(req.headers.origin)) return json(res, 403, { error: '请求来源不匹配' });
     if (serveLocaleAsset(req,res,url.pathname)) return;
-    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '1.8.0' });
+    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '1.9.0' });
     // Machine callbacks use the existing order secret, never a browser session.
     if (url.pathname === '/api/address-orders/callback') {
       if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
       if (!callbackAuthorized(req.headers.authorization, config.bindings?.ADDRESS_ORDER_CALLBACK_TOKEN)) return json(res, 401, { error: '未授权' });
       const payload = await body(req, 8192);
       const response = await mf.dispatchFetch(url.href, { method: 'POST', headers: { authorization: req.headers.authorization, 'content-type': 'application/json' }, body: payload });
+      if (response.ok) {
+        try {
+          const update = JSON.parse(payload.toString());
+          if (update.status === 'failed') await commerce.reviewFailure(update.requestNo);
+        } catch { console.warn('Address refund review deferred to reconciliation'); }
+      }
       res.writeHead(response.status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       res.end(await response.text());
       return;
@@ -153,8 +159,10 @@ const server = https.createServer(tls, async (req, res) => {
     const user = session.user;
     const customer = user.role === 'customer';
     if (customer && req.method === 'GET' && url.pathname === '/__host/shop') return redirect(res, customerDestination(url));
+    if (url.pathname === '/api/settings/security') return json(res,410,{error:'支付密码已停用。'});
+    if (req.method === 'GET' && url.pathname === '/__host/security') return redirect(res, '/__host/wallet');
     if (await commerce.route(req,res,url,user)) return;
-    if (await handlePrivateTemplateArchive(req, res, { root, url, user, allowedOrigins, config, archiveDownloads, purchases, readBody:body })) return;
+    if (await handlePrivateTemplateArchive(req, res, { root, url, user, allowedOrigins, config, archiveDownloads, readBody:body })) return;
     if (customer && !(customerEsimRoute(req.method, url.pathname) || customerWorkbenchRoute(req.method, url.pathname))) {
       return json(res, 403, { error: '此账号无权访问该资源。' });
     }
@@ -179,14 +187,15 @@ const server = https.createServer(tls, async (req, res) => {
       if (asset.startsWith(assetRoot + path.sep)) {
         try {
           if (statSync(asset).isFile()) {
-            const types = { '.js': 'application/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.png': 'image/png', '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.json': 'application/json' };
-            res.writeHead(200, { 'content-type': types[path.extname(asset)] || 'application/octet-stream', 'cache-control': url.pathname.includes('/assets/') ? 'private, max-age=31536000, immutable' : /\/(page|mail-delivery-center)-[^/]+\.js$/.test(url.pathname) ? 'private, no-cache' : 'private, max-age=3600' });
+            const types = { '.js': 'application/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.json': 'application/json' };
+            res.writeHead(200, { 'content-type': types[path.extname(asset)] || 'application/octet-stream', 'cache-control': url.pathname.includes('/assets/') ? 'private, max-age=31536000, immutable' : /\/(page|mail-delivery-center|address-order-status)-[^/]+\.js$/.test(url.pathname) ? 'private, no-cache' : 'private, max-age=3600' });
             if (req.method === 'HEAD') return res.end();
             await pipeline(createReadStream(asset), res); return;
           }
         } catch (error) { if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error; }
       }
     }
+    if (isBrandedTemplatePreview(url.pathname)) return json(res, 404, { error: '暂无样张' });
     const headers = trustedHeaders(req.headers, session.user);
     for (const name of [...headers.keys()]) if (name.startsWith('x-lumen-')) headers.delete(name);
     // The outer gateway checks the original browser origin before normalization.
@@ -202,8 +211,9 @@ const server = https.createServer(tls, async (req, res) => {
     res.statusCode = response.status;
     for (const [key, value] of response.headers) if (!['transfer-encoding', 'content-encoding', 'content-length'].includes(key)) res.setHeader(key, value);
     res.setHeader('x-content-type-options', 'nosniff');
+    if (req.method === 'GET' && response.headers.get('content-type')?.includes('text/html')) res.removeHeader('content-length');
     if (req.method === 'GET' && url.pathname === '/' && response.headers.get('content-type')?.includes('text/html')) return res.end(withLocale(enhanceArchiveHtml(await response.text(), session.user).replace('</head>', '<link rel="stylesheet" href="/__host/esim-checkout.css"><link rel="stylesheet" href="/__host/dashboard.css"><link rel="stylesheet" href="/__host/market-table.css"><script defer src="/__host/esim-checkout.js"></script><script defer src="/__host/market-table.js"></script><script defer src="/__host/commerce-bridge.js"></script></head>').replace('</body>', '<script defer src="/__host/resource-operations.js"></script></body>')));
-    const localizedPage = url.pathname === '/mail-delivery' || url.pathname.startsWith('/address-orders/');
+    const localizedPage = !url.pathname.startsWith('/api/');
     if (req.method === 'GET' && localizedPage && response.headers.get('content-type')?.includes('text/html')) {
       return res.end(withLocale(await response.text()));
     }
@@ -213,6 +223,6 @@ const server = https.createServer(tls, async (req, res) => {
     console.error(JSON.stringify({ event: 'request_failed', path: req.url?.split('?')[0], time: new Date().toISOString() }));
   }
 });
-server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '1.8.0', port: config.port || 8443 })));
+server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '1.9.0', port: config.port || 8443 })));
 const cleanup = setInterval(() => { identities.cleanup(); for (const [key, value] of attempts) if (value.until < Date.now()) attempts.delete(key); }, 60_000);
 for (const event of ['SIGTERM', 'SIGINT']) process.on(event, () => { clearInterval(cleanup); clearInterval(commerceTimer); deposits.stop(); operations.close(); server.close(async () => { await mf.dispose(); process.exit(0); }); });
