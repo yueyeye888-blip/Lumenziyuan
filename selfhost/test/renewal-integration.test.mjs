@@ -147,3 +147,153 @@ test('manual top-up honors ownership, live base match, quota and the supplier re
     assert.equal(calls.length,5);
   } finally { await mf.dispose(); funds.close(); }
 });
+
+test('direct Telegram renewal confirms the original period, displayed plan and cap, and never sends a repeat charge',async t => {
+  const {Miniflare}=await import('miniflare');
+  const mf=new Miniflare({modules:true,script:'export default {fetch(){return new Response("OK")}}',d1Databases:['DB']});
+  const validThrough=new Date(Date.now()+3*86400_000).toISOString();
+  const extendedThrough=new Date(Date.parse(validThrough)+30*86400_000).toISOString();
+  const original={packageCode:'ORIGINAL01',slug:'SG_3_30',volume:3221225472,duration:30,durationUnit:'DAY',packageName:'SG 3GB 30Days'};
+  const topup={packageCode:'TOPUP_ORIGINAL01',slug:'SG_3_30',volume:3221225472,duration:30,
+    price:15400,currencyCode:'USD',durationUnit:'DAY',name:'SG 3GB 30Days renewal',dataType:1};
+  const profile=id=>({esimTranNo:id,iccid:'8985123000000000001',esimStatus:'IN_USE',dataType:1,
+    expiredTime:validThrough,packageList:[{...original,packageCode:'TOPUP_ORIGINAL01'},original]});
+  const cards=new Map(['CARD_A','CARD_B','CARD_C','CARD_D','CARD_E'].map(id=>[id,profile(id)]));
+  const calls=[];
+  let supplierFunds=250000, offerPrice=topup.price, offeredCode=topup.packageCode;
+  const supplier={
+    balance:async()=>supplierFunds,
+    profile:async id=>cards.has(id)?structuredClone(cards.get(id)):undefined,
+    topupOffers:async()=>[{...topup,packageCode:'OTHER',slug:'other',duration:7},
+      {...topup,packageCode:offeredCode,price:offerPrice}],
+    async topup(line) {
+      calls.push(line);
+      if(line.resourceId==='CARD_C') throw Error('Synthetic request timeout');
+      supplierFunds-=line.priceRaw;
+      // CARD_B simulates delayed vendor profile synchronization after a web renewal.
+      if(line.resourceId!=='CARD_B') cards.get(line.resourceId).expiredTime=extendedThrough;
+      return {receipt:'MOCK_RECEIPT_'+calls.length,expiredTime:extendedThrough,totalVolume:6442450944,totalDuration:60};
+    },
+  };
+  const funds=testWallet({});
+  const secondary={id:'secondary',email:'secondary@test.example'};
+  const config={origin,bindings:{RESOURCE_ADMIN_EMAILS:admin.email+','+secondary.email}};
+  const makeApi=()=>createEsimPurchases({wallet:funds,config,mf,supplier,readBody:async req=>req.payload});
+  let api=makeApi();
+  const snapshot=(resourceId,extra={})=>({resourceId,expectedExpiry:validThrough,expectedPackageCode:original.packageCode,...extra});
+  const click=(quote,extra={})=>({...quote,expectedPlanCode:quote.planCode,maxPriceRaw:quote.priceRaw,actionId:'test-reminder',...extra});
+  async function settled(id) {
+    for(let n=0;n<60;n++){
+      const {records}=await api.telegramRenewalHistory(admin,id);
+      if(records.every(row=>!['queued','submitting'].includes(row.status))) return records;
+      await delay(30);
+    }
+    throw Error('Renewal did not settle');
+  }
+  async function web(path,fields) {
+    let result;
+    const response={writeHead(status){result={status};},end(body){result.data=JSON.parse(body);}};
+    const request={method:'POST',headers:{origin,'content-type':'application/json'},payload:JSON.stringify(fields)};
+    assert.ok(await api.route(request,response,new URL(path,origin),admin));
+    return result;
+  }
+  try {
+    await api.ready();
+    await assert.rejects(api.previewReminderRenewal(staff,snapshot('CARD_A')),error=>error.status===403);
+    await assert.rejects(api.previewReminderRenewal(secondary,snapshot('CARD_A')),error=>error.status===403);
+    await assert.rejects(api.previewReminderRenewal(admin,snapshot('CARD_A',{expectedPackageCode:'WRONG'})),error=>error.status===409);
+    await assert.rejects(api.previewReminderRenewal(admin,snapshot('CARD_A',{expectedExpiry:new Date(Date.parse(validThrough)+1000).toISOString()})),
+      error=>error.status===409);
+    cards.get('CARD_D').packageList=[{...original,volume:undefined}];
+    await assert.rejects(api.previewReminderRenewal(admin,snapshot('CARD_D')),error=>error.status===409);
+    cards.get('CARD_E').expiredTime=new Date(Date.now()-1000).toISOString();
+    await assert.rejects(api.previewReminderRenewal(admin,snapshot('CARD_E',{expectedExpiry:cards.get('CARD_E').expiredTime})),error=>error.status===409);
+
+    const quote=await api.previewReminderRenewal(admin,snapshot('CARD_A',{expectedPackageCode:undefined}));
+    assert.equal(quote.expectedPackageCode,original.packageCode);
+    assert.equal(quote.planCode,topup.packageCode);
+    assert.equal(quote.priceRaw,15400);
+    assert.equal(api.telegramRenewalId(snapshot('CARD_A')),quote.id);
+    assert.equal((await web('/api/esim/renewals',{id:quote.id,code:quote.planCode})).status,409);
+    await assert.rejects(api.renewFromTelegram(admin,click(quote,{maxPriceRaw:undefined})),error=>error.status===400);
+    await assert.rejects(api.renewFromTelegram({...admin,enabled:false},click(quote)),error=>error.status===403);
+    await assert.rejects(api.renewFromTelegram(staff,click(quote)),error=>error.status===403);
+    offeredCode='TOPUP_DIFFERENT';
+    await assert.rejects(api.renewFromTelegram(admin,click(quote)),error=>error.status===409 && /方案已变动/.test(error.message));
+    offeredCode=topup.packageCode;
+    offerPrice=quote.priceRaw+1;
+    await assert.rejects(api.renewFromTelegram(admin,click(quote)),error=>error.status===409 && /价格已高于/.test(error.message));
+    assert.equal(calls.length,0);
+
+    offerPrice=15000;
+    const submissions=await Promise.all([
+      api.renewFromTelegram(admin,click(quote,{actionId:'five-day-notice'})),
+      api.renewFromTelegram(admin,click(quote,{actionId:'one-day-notice'})),
+    ]);
+    assert.ok(submissions.every(result=>result.id===quote.id && result.records.length===1));
+    let [result]=await settled(quote.id);
+    assert.equal(result.status,'succeeded');
+    assert.equal(result.amountRaw,15000);
+    assert.equal(result.receipt,'MOCK_RECEIPT_1');
+    assert.equal(result.expiredTime,extendedThrough);
+    assert.equal(calls.length,1);
+    assert.equal(calls[0].resourceId,'CARD_A');
+    assert.equal(calls[0].code,topup.packageCode);
+    assert.equal(calls[0].transactionId,quote.id+'-01');
+    api=makeApi();
+    result=(await api.renewFromTelegram(admin,click(quote))).records[0];
+    assert.equal(result.status,'succeeded');
+    assert.equal(calls.length,1);
+
+    const reminded=await api.previewReminderRenewal(admin,snapshot('CARD_B'));
+    const webQuote=(await web('/api/esim/renewal-quote',{ids:['CARD_B']})).data;
+    assert.equal((await web('/api/esim/renewals',{id:webQuote.id,code:topup.packageCode})).status,202);
+    assert.equal((await settled(webQuote.id))[0].status,'succeeded');
+    assert.equal(cards.get('CARD_B').expiredTime,validThrough);
+    await assert.rejects(api.renewFromTelegram(admin,click(reminded)),error=>error.status===409);
+    assert.equal(calls.length,2);
+
+    const uncertainQuote=await api.previewReminderRenewal(admin,snapshot('CARD_C'));
+    await api.renewFromTelegram(admin,click(uncertainQuote));
+    assert.equal((await settled(uncertainQuote.id))[0].status,'uncertain');
+    api=makeApi();
+    assert.equal((await api.renewFromTelegram(admin,click(uncertainQuote))).records[0].status,'uncertain');
+    assert.equal((await api.telegramRenewalHistory(admin,uncertainQuote.id)).records[0].status,'uncertain');
+    assert.equal(calls.length,3);
+
+    cards.set('CARD_F',profile('CARD_F'));
+    const blockedQuote=await api.previewReminderRenewal(admin,snapshot('CARD_F'));
+    await assert.rejects(api.renewFromTelegram(admin,click(blockedQuote),()=>false),error=>error.status===409);
+    await assert.rejects(api.telegramRenewalHistory(admin,blockedQuote.id),error=>error.status===404);
+    let checks=0;
+    await api.renewFromTelegram(admin,click(blockedQuote),()=>++checks===1);
+    const [blockedResult]=await settled(blockedQuote.id);
+    assert.equal(blockedResult.status,'not_sent');
+    assert.match(blockedResult.error,/观察状态已变动/);
+
+    // Force the clock past expiry while the accepted request is waiting to send.
+    // The direct action must be closed locally even after the payment intent exists.
+    cards.set('CARD_G',profile('CARD_G'));
+    const expiresWhileQueued=await api.previewReminderRenewal(admin,snapshot('CARD_G'));
+    const clock=Date.now.bind(Date);
+    let expired=false;
+    const mocked=t.mock.method(Date,'now',()=>expired?Date.parse(validThrough)+1:clock());
+    try {
+      await api.renewFromTelegram(admin,click(expiresWhileQueued),()=>{expired=true;return true;});
+      const [expiredResult]=await settled(expiresWhileQueued.id);
+      assert.equal(expiredResult.status,'not_sent');
+      assert.match(expiredResult.error,/已到期/);
+    } finally { mocked.mock.restore(); }
+    const db=await api.ready();
+    for(const quote of [blockedQuote,expiresWhileQueued]) {
+      const {settled,retail_amount}=await db.prepare('SELECT settled,retail_amount FROM esim_commerce_payments WHERE payment_id=?')
+        .bind(quote.id+'-01').first();
+      assert.equal(settled,1);
+      assert.equal(retail_amount,0);
+    }
+    assert.equal(calls.length,3);
+    assert.equal(funds.balance(admin.id),0);
+    assert.equal(funds.count('spent'),0);
+    assert.equal(funds.count('held'),0);
+  } finally { await mf.dispose(); funds.close(); }
+});

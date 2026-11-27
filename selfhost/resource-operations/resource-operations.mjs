@@ -8,6 +8,7 @@ import { makeEsimWorkbook } from './esim-export.mjs';
 import { openEsimMailLog, normalizeRecipient } from './esim-mail-log.mjs';
 import { openEsimArchives } from './esim-archives.mjs';
 import { openEsimWatches } from './esim-watches.mjs';
+import { createTelegramDirectActions } from './esim-telegram-actions.mjs';
 import { maxWorkbookBytes } from '../outlook-mail.mjs';
 
 const isEsimId = id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id);
@@ -171,7 +172,8 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       ${admin(user) ? '' : 'WHERE user_id = ?'} ORDER BY created_at DESC`);
     const { results } = await (admin(user) ? statement : statement.bind(user.id)).all();
     const records = results.map(({status,...row}) => ({ ...row, kind:'address_order', delivery: statusForMail[status] || statusForMail.waiting }));
-    data.records = [...data.records, ...records, ...mailLog.list(user,admin(user))].sort((a,b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    const recordTime = row => Date.parse(validTime(row.updatedAt) || validTime(row.createdAt)) || 0;
+    data.records = [...data.records, ...records, ...mailLog.list(user,admin(user))].sort((a,b) => recordTime(b) - recordTime(a));
     return { status: reply.status, data };
   }
 
@@ -333,14 +335,20 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
     if (checking) return;
     checking = true;
     try {
-      const user = identities.list().find(user => user.enabled !== false && admin(user));
-      if (!user) throw Error('无管理员账号');
+      const firstAdmin = identities.list().find(user => user.enabled !== false && admin(user));
+      if (!firstAdmin) throw Error('无管理员账号');
       const db = await mf.getD1Database('DB');
-      const settings = await telegramSettings(db);
+      const shared = await telegramSettings(db);
+      const owner = directOwner();
+      const dedicated = owner ? directActions.sessionFor(shared,owner) : null;
+      const user = dedicated ? owner : firstAdmin;
+      const settings = dedicated || shared;
       if (!settings.botToken || !settings.chatId) throw Error('Telegram 尚未配置');
       const received = await overview(user);
       if (received.status !== 200 || !Array.isArray(received.data.history?.items)) throw Error('供应商数据不可用');
-      const records = esimReminderCandidates(received.data.history.items,Date.now(),watches.list());
+      const items = received.data.history.items;
+      const byId = new Map(items.map(item=>[item.esimTranNo,item]));
+      const records = esimReminderCandidates(items,Date.now(),watches.list());
       const fresh = [];
       for (const row of records) {
         if (!await db.prepare('SELECT id FROM notification_log WHERE id=?').bind(row.id).first()) fresh.push(row);
@@ -355,8 +363,14 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
         const pause = nextSendAt - Date.now();
         if (pause > 0) await new Promise(resolve => setTimeout(resolve,pause));
         if (batch[0].kind === 'expiry' && watches.has(batch[0].resource)) return;
-        const response = await fetch(`https://api.telegram.org/bot${settings.botToken}/sendMessage`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(telegramReminderPayload(settings.chatId,config.origin,batch)),signal:AbortSignal.timeout(12000)});
-        if (!response.ok || !(await response.json()).ok) throw Error(`Telegram 发送失败 (${response.status})`);
+        const payload = telegramReminderPayload(settings.chatId,config.origin,batch);
+        const actionToken = dedicated && batch[0].kind === 'expiry'
+          ? await directActions.prepare(dedicated,user,batch[0],byId.get(batch[0].resource),payload) : null;
+        if (batch[0].kind === 'expiry' && watches.has(batch[0].resource)) return;
+        const response = await fetch(`https://api.telegram.org/bot${settings.botToken}/sendMessage`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(12000)});
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw Error(`Telegram 发送失败 (${response.status})`);
+        if (actionToken) directActions.bind(actionToken,result.result);
         nextSendAt = Date.now() + spacing;
         await db.batch(batch.map(row => db.prepare('INSERT OR IGNORE INTO notification_log (id,resource_id,kind) VALUES (?,?,?)').bind(row.id,row.resource,row.kind)));
         progress.notified += batch.length;
@@ -371,10 +385,23 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       progress.error = ['无管理员账号','Telegram 尚未配置','供应商数据不可用'].includes(error.message) || /^Telegram 发送失败 \(\d+\)$/.test(error.message) ? error.message : '检查失败，等待下次运行';
     } finally { checking = false; }
   }
+  function directOwner() {
+    const owners=identities.list().filter(user=>user.enabled!==false&&canManageAccounts(config,user));
+    return owners.length===1?owners[0]:null;
+  }
+  const directActions=createTelegramDirectActions({root,config,currentAdmin:directOwner,
+    loadSharedSettings:async()=>telegramSettings(await mf.getD1Database('DB')),purchases,watches,overview});
+  progress.directActions=directActions.status;
   const initial = setTimeout(() => void checkReminders(), 5000);
   const timer = setInterval(() => {
     progress.nextCheckAt = new Date(Date.now() + pollInterval).toISOString();
     void checkReminders({send:true});
   },pollInterval);
-  return { route, close() { clearTimeout(initial); clearInterval(timer); watches.close(); archives.close(); mailLog.close(); } };
+  return { route, close() {
+    clearTimeout(initial); clearInterval(timer);
+    const closeStores=()=>{ watches.close(); archives.close(); mailLog.close(); };
+    const stopping=directActions.close();
+    if (stopping) return stopping.finally(closeStores);
+    closeStores();
+  } };
 }

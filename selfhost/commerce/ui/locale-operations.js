@@ -271,3 +271,28 @@ window.LumenLocaleExtraPatterns.push(
 );
 
 window.LumenLocaleExtra['暂时无法读取提醒关联的 eSIM，请刷新页面。'] = 'Could not load the eSIM from this reminder. Please refresh.';
+
+Object.assign(window.LumenLocaleExtra, {
+  '按资源类型筛选': 'Filter by resource type',
+  '地址生成器': 'Address Generator',
+  'eSIM 流量卡': 'eSIM Data Plans',
+  '库存资源': 'Inventory Resources',
+  'SAMPLE 测试文件': 'SAMPLE Test Files',
+  '其他资源': 'Other Resources',
+  '提交时间：': 'Submitted: ',
+  '认领时间：': 'Claimed: ',
+  '发送请求时间：': 'Send requested: ',
+  '创建时间：': 'Created: ',
+  '状态更新时间：': 'Status updated: ',
+  '发送结果记录时间：': 'Send result recorded: ',
+  '未记录': 'Not recorded',
+  '所有订单与资源的邮件交付记录': 'Email delivery records for all orders and resources',
+});
+window.LumenLocaleExtraPatterns.push(
+  [/^提交时间：(.+)$/, 'Submitted: $1'],
+  [/^认领时间：(.+)$/, 'Claimed: $1'],
+  [/^发送请求时间：(.+)$/, 'Send requested: $1'],
+  [/^创建时间：(.+)$/, 'Created: $1'],
+  [/^状态更新时间：(.+)$/, 'Status updated: $1'],
+  [/^发送结果记录时间：(.+)$/, 'Send result recorded: $1'],
+);

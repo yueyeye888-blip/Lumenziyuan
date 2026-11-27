@@ -48,6 +48,7 @@
 - **eSIMAccess** 在 `bindings.ESIM_ACCESS_CODE` 与 `bindings.ESIM_SECRET_KEY` 填入你的 API 凭据。超级管理员可在「合伙人与额度」为账号添加余额。购买和续费在供应商成本、本站零售价及用户可用余额核对通过后提交。
 - **Outlook** 配置 `outlook.mailbox` 和支持个人 Microsoft 账号、允许公共客户端设备流的 `outlook.clientId`。运行 `node authorize-site-outlook.mjs start`，在 Microsoft 页面完成授权，再运行 `node authorize-site-outlook.mjs poll`。确认授权邮箱后重启服务。迁移过旧授权文件的实例可沿用其中的邮箱和 client ID。验证发件状态后再发送实际附件。
 - **Telegram** 以管理员身份在站点内配置机器人、接收方并发送测试消息。恢复旧数据库的实例可沿用已保存的设置和原加密密钥。
+- **Telegram 一键续订** 使用独立的 eSIM 机器人。在 `config/runtime.json` 的 `bindings` 填写 `TELEGRAM_ESIM_BOT_TOKEN`、`TELEGRAM_ESIM_CHAT_ID`、`TELEGRAM_DIRECT_ACTOR_ID`（相同的主管理员私人会话 ID），将 `TELEGRAM_DIRECT_ACTIONS` 设为 `1` 后重启站点。请先向独立机器人发送 `/start`。该机器人须有独立令牌，且无其他消息接收程序或 Webhook。独立机器人验证通过后，新提醒会包含原套餐报价及一键操作按钮；费用高于展示金额时停止本次提交。原有提醒机器人配置继续保留，独立配置不可用时仍使用网页操作入口。
 - **地址翻译** 可选设置 `bindings.OPENAI_API_KEY` 和 `bindings.ADDRESS_TRANSLATION_MODEL`。
 - **地址订单** 站内表单、通知、状态、队列投递和回调已包含。若曾运行独立的订单处理程序，请私下迁移并配置它。按需填写 `siteOrderQueueDirectory`，并通过共享的 `bindings.ADDRESS_ORDER_CALLBACK_TOKEN` 验证回调。上线前分别验证独立程序的生成、付款及邮件交付路径。
 - **驾驶证与签证模板归档** 登录后的模板库和权限在站点代码里。归档索引、预览和已授权原文件从私有备份恢复，归档上传管理员默认是 `RESOURCE_ADMIN_EMAILS` 的首个账号，可通过 `archiveOwnerEmail` 指定。

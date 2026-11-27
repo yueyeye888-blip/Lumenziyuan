@@ -462,5 +462,9 @@ export function createEsimPurchases({ config, mf, wallet, readBody, supplier = c
     };
   }
   const settle = async () => settlePendingPayments(await dbReady(),wallet);
-  return { route, summary, sync, reconcile, settle, usesSupplier, supplierBalance, customerProfiles, ready:dbReady };
+  return {
+    route,summary,sync,reconcile,settle,usesSupplier,supplierBalance,customerProfiles,ready:dbReady,
+    previewReminderRenewal:renewals.previewReminderRenewal,renewFromTelegram:renewals.renewFromTelegram,
+    telegramRenewalHistory:renewals.telegramRenewalHistory,telegramRenewalId:renewals.telegramRenewalId,
+  };
 }

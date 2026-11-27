@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { SupplierError } from './esim-supplier.mjs';
 
@@ -37,6 +37,36 @@ export function matchOriginal(original, offers) {
     candidates.find(plan => original.slug && plan.slug === original.slug);
 }
 
+function reminderTime(value) {
+  if (typeof value !== 'string' || !value.trim()) return expiry(value);
+  const normalized = value.trim().replace(' ', 'T').replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+  return expiry(/(?:Z|[+-]\d{2}:\d{2})$/i.test(normalized) ? normalized : normalized + 'Z');
+}
+
+// Both the five-day and one-day alerts refer to the same paid renewal period.
+// Keep a fixed supplier transaction ID for that period even across a restart.
+export function telegramRenewalBatchId(resourceId, expectedExpiry) {
+  const period = reminderTime(expectedExpiry);
+  if (typeof resourceId !== 'string' || !validResource.test(resourceId) || !period) {
+    throw new TypeError('Invalid renewal period');
+  }
+  const hash = createHash('sha256').update(JSON.stringify(['telegram-esim-renewal',resourceId,period])).digest('hex');
+  return 'LR-'+hash.slice(0,8)+'-'+hash.slice(8,12)+'-4'+hash.slice(13,16)+'-8'+hash.slice(17,20)+'-'+hash.slice(20,32);
+}
+
+function preciseOriginal(original, offers) {
+  if (!original || !Number.isSafeInteger(original.volume) || original.volume <= 0 ||
+      !Number.isSafeInteger(original.duration) || original.duration <= 0) return;
+  const matched = offers.filter(offer => offer.volume === original.volume &&
+    offer.duration === original.duration &&
+    (!original.durationUnit || offer.durationUnit === original.durationUnit));
+  const exact = matched.filter(offer => offer.packageCode === 'TOPUP_' + original.packageCode);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1 || !original.slug) return;
+  const equivalent = matched.filter(offer => offer.slug === original.slug);
+  if (equivalent.length === 1) return equivalent[0];
+}
+
 const schema = [
   `CREATE TABLE IF NOT EXISTS esim_renewal_lines (
     id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, user_id TEXT NOT NULL, user_email TEXT NOT NULL, staff INTEGER NOT NULL,
@@ -67,7 +97,7 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
   const blocked = (db,id) => db.prepare(`SELECT id FROM esim_renewal_lines WHERE resource_id=? AND
     status IN ('queued','submitting','uncertain') LIMIT 1`).bind(id).first();
 
-  async function offersFor(db,resourceId,batch,user) {
+  async function offersFor(db,resourceId,batch,user,reminder) {
     const card = {resourceId, options:[]};
     const skip = reason => ({...card, reason});
     try {
@@ -78,6 +108,19 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
       const original = originalPlan(profile);
       card.name = original?.packageName || original?.slug || 'eSIM';
       card.maskedIccid = '••••' + profile.iccid.slice(-4);
+      if (reminder) {
+        const liveExpiry = reminderTime(profile.expiredTime);
+        if (profile.esimTranNo !== resourceId || !liveExpiry || liveExpiry !== reminder.expectedExpiry ||
+            Date.parse(liveExpiry) <= Date.now()) {
+          return skip('eSIM 到期时间已变动或已失效，请查看最新资源状态。');
+        }
+        if (typeof original?.packageCode !== 'string' || !validResource.test(original.packageCode) ||
+            /^TOPUP_/i.test(original.packageCode) ||
+            (reminder.expectedPackageCode && original.packageCode !== reminder.expectedPackageCode)) {
+          return skip('无法确认原套餐，或原套餐已变动，请查看最新资源状态。');
+        }
+        card.expectedPackageCode = original.packageCode;
+      }
       if (await blocked(db,resourceId)) return skip('有一笔续费正在处理或待核对，请查看续费记录。');
       const expires = expiry(profile.expiredTime);
       if (!readableStatuses.has(profile.esimStatus) || terminalSmdpStatuses.has(profile.smdpStatus) ||
@@ -86,7 +129,7 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
         return skip('此按天套餐请在供应商后台确认续费天数与金额。');
       }
       const plans = (await supplier.topupOffers(profile)).filter(plan => compatible(plan) && priceFor(plan.price,user) !== null);
-      const preferred = matchOriginal(original,plans);
+      const preferred = reminder ? preciseOriginal(original,plans) : matchOriginal(original,plans);
       const matched = batch ? [preferred].filter(Boolean)
         : preferred ? [preferred,...plans.filter(plan=>plan.packageCode !== preferred.packageCode)] : plans;
       if (!matched.length) return skip(batch ? '供应商未返回与原套餐匹配的续费方案。' : '供应商未返回可用的续费方案。');
@@ -145,12 +188,21 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
     await settlePayment(db,wallet,line.transactionId);
   }
 
-  async function process(db,lines) {
+  async function process(db,lines,reminderApproval) {
     for (const line of lines) {
       await serialize(async () => {
         const started = await db.prepare("UPDATE esim_renewal_lines SET status='submitting',updated_at=? WHERE id=? AND status='queued'")
           .bind(now(),line.transactionId).run();
         if (started.meta.changes !== 1) return;
+        // This is the last check before the potentially charged supplier call.
+        // The row can be marked not_sent while no external request has been made.
+        const reason=reminderApproval && reminderBlockReason(reminderApproval);
+        if (reason) {
+          await db.prepare("UPDATE esim_renewal_lines SET status='not_sent',error=?,updated_at=? WHERE id=? AND status='submitting'")
+            .bind(reason,now(),line.transactionId).run();
+          await settlePayment(db,wallet,line.transactionId);
+          return;
+        }
         let result;
         try {
           result = await supplier.topup({...line,priceRaw:line.costRaw});
@@ -176,17 +228,23 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
     }
   }
 
-  async function submit(user,fields) {
+  async function submit(user,fields,reminderApproval) {
     const { id,code } = fields || {};
     check(typeof id === 'string' && validBatch.test(id),400,'续订编号无效。');
     const db = await dbReady();
     return serialize(async () => {
       const prior = await readBatch(db,id);
       if (prior.length) {
-        check(prior[0].user_id === user.id,404,'续费记录未找到。');
+        check(prior[0].user_id === user.id &&
+          (!reminderApproval || prior.every(row=>row.resource_id===reminderApproval.resourceId)),404,'续费记录未找到。');
         return { id, records:prior.map(present) };
       }
-      const approved = quotes.get(id);
+      // Direct Telegram requests quote within the same mutation queue as web
+      // purchases so a concurrent successful renewal cannot invalidate the period.
+      const approved = reminderApproval ? {
+        ...reminderApproval,userId:user.id,direct:true,single:false,
+        cards:[await reminderCard(db,user,reminderApproval)],expiresAt:Date.now()+quoteLifetime,
+      } : quotes.get(id);
       const direct = usesSupplier(user);
       check(approved?.userId===user.id && approved.expiresAt>Date.now(),409,'报价已过期，请重新获取报价。');
       const permitted = approved.cards.filter(card=>card.options.length).map(card=>{
@@ -197,6 +255,13 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
       check(permitted.length>0,409,'本次没有可以续费的 eSIM。');
       check(approved.direct === direct && permitted.every(line => priceFor(line.costRaw,user) === line.priceRaw),
         409,'账号价格已变动，请重新获取报价。');
+      if (reminderApproval) {
+        check(permitted.length===1 && permitted[0].code===reminderApproval.expectedPlanCode,409,
+          '续费方案已变动，请在网站重新确认最新报价。');
+        check(permitted[0].priceRaw<=reminderApproval.maxPriceRaw,409,
+          '续费价格已高于提醒中的金额，请在网站重新确认最新报价。');
+        check(Date.parse(reminderApproval.expectedExpiry)>Date.now(),409,'该 eSIM 已到期，请查看最新资源状态。');
+      }
       await authorize(db,user,permitted.map(line=>line.resourceId));
       const since = new Date(approved.issuedAt).toISOString();
       for (const line of permitted) {
@@ -211,6 +276,10 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
       if (!direct) check(amount<=availability(user),402,'账户余额不足，请先充值。');
       check(cost<=await supplierAvailable(db,balance),409,
         direct ? 'eSIMAccess 供应商账户可用余额不足。' : '供应商暂时无法接受此金额的订单。');
+      if (reminderApproval) {
+        const reason=reminderBlockReason(reminderApproval);
+        check(!reason,409,reason);
+      }
       const staff = isAdmin(user)?0:1;
       const date = now();
       const lines=permitted.map((line,index)=>({...line,transactionId:id+'-'+String(index+1).padStart(2,'0')}));
@@ -227,7 +296,7 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
         throw error;
       }
       quotes.delete(id);
-      void process(db,lines).catch(()=>console.warn('eSIM renewal batch interrupted'));
+      void process(db,lines,reminderApproval).catch(()=>console.warn('eSIM renewal batch interrupted'));
       return { id, records:(await readBatch(db,id)).map(present) };
     });
   }
@@ -249,5 +318,85 @@ export function createEsimRenewals({ supplier, dbReady, serialize, isAdmin, avai
     return { records:results.slice(0,50).map(present),hasMore:results.length>50 };
   }
 
-  return { quote,submit,history };
+  function requireReminderAdmin(user) {
+    check(user && typeof user.id==='string' && user.id && typeof user.email==='string' &&
+      user.enabled!==false && isAdmin(user) && usesSupplier(user),403,'仅启用的主管理员可通过 Telegram 直接续费。');
+  }
+
+  function reminderBlockReason(approval) {
+    if (Date.parse(approval.expectedExpiry)<=Date.now()) return '该 eSIM 已到期，未发送续费。';
+    if (approval.canSubmit) {
+      try { if (approval.canSubmit()===true) return null; }
+      catch { /* A missing authorization check fails closed. */ }
+      return '当前管理员或 eSIM 观察状态已变动，未发送续费。';
+    }
+    return null;
+  }
+
+  function reminderPeriod(fields, requirePackage) {
+    const expectedExpiry = reminderTime(fields?.expectedExpiry);
+    const {resourceId,expectedPackageCode} = fields || {};
+    check(typeof resourceId==='string' && validResource.test(resourceId) && expectedExpiry,400,'续费提醒编号或到期时间无效。');
+    check((!requirePackage && expectedPackageCode==null) ||
+      (typeof expectedPackageCode==='string' && validResource.test(expectedPackageCode) && !/^TOPUP_/i.test(expectedPackageCode)),
+      400,'续费提醒缺少有效的原套餐编号。');
+    return {resourceId,expectedExpiry,expectedPackageCode,id:telegramRenewalBatchId(resourceId,expectedExpiry)};
+  }
+
+  async function confirmReminderPeriod(db,reminder) {
+    const last = await db.prepare(`SELECT expires_at,MAX(expires_at) OVER () AS furthest_expiry
+      FROM esim_renewal_lines WHERE resource_id=? AND status='succeeded'
+      ORDER BY updated_at DESC,id DESC LIMIT 1`).bind(reminder.resourceId).first();
+    if (last) {
+      const renewedExpiry = reminderTime(last.expires_at);
+      const furthestExpiry = reminderTime(last.furthest_expiry);
+      check(renewedExpiry && furthestExpiry && Date.parse(furthestExpiry)<=Date.parse(reminder.expectedExpiry),409,
+        '续费记录可能更新了当前有效期，请先核对最新资源状态。');
+    }
+  }
+
+  async function reminderCard(db,user,reminder) {
+    check(Date.parse(reminder.expectedExpiry)>Date.now(),409,'该 eSIM 已到期，请查看最新资源状态。');
+    await confirmReminderPeriod(db,reminder);
+    const card = await offersFor(db,reminder.resourceId,true,user,reminder);
+    check(card.options.length===1,409,card.reason || '未能确认原套餐的续费方案。');
+    return card;
+  }
+
+  async function previewReminderRenewal(user,fields) {
+    requireReminderAdmin(user);
+    const reminder = reminderPeriod(fields,false);
+    const db = await dbReady();
+    const issuedAt = Date.now();
+    check(!(await readBatch(db,reminder.id)).length,409,'该到期提醒已有续费记录。');
+    const card = await reminderCard(db,user,reminder);
+    const option = card.options[0];
+    return {
+      id:reminder.id,resourceId:reminder.resourceId,expectedExpiry:reminder.expectedExpiry,
+      expectedPackageCode:card.expectedPackageCode,plan:option.name,planCode:option.code,
+      priceRaw:option.priceRaw,duration:option.duration,volume:option.volume,durationUnit:option.durationUnit,issuedAt,
+    };
+  }
+
+  async function renewFromTelegram(user,fields,canSubmit) {
+    requireReminderAdmin(user);
+    const reminder = reminderPeriod(fields,true);
+    const {expectedPlanCode,maxPriceRaw,issuedAt} = fields;
+    check(typeof expectedPlanCode==='string' && validResource.test(expectedPlanCode),400,'续费提醒缺少已确认的续费方案。');
+    check(Number.isSafeInteger(maxPriceRaw) && maxPriceRaw>=0 &&
+      Number.isSafeInteger(issuedAt) && issuedAt>0 && issuedAt<=Date.now() &&
+      issuedAt<Date.parse(reminder.expectedExpiry),400,'续费提醒缺少有效的确认金额或报价时间。');
+    check(canSubmit===undefined || typeof canSubmit==='function',400,'续费授权状态无效。');
+    return submit(user,{id:reminder.id},{...reminder,expectedPlanCode,maxPriceRaw,issuedAt,canSubmit});
+  }
+
+  function telegramRenewalHistory(user,id) {
+    requireReminderAdmin(user);
+    return history(user,new URLSearchParams({id}));
+  }
+
+  return {
+    quote,submit,history,previewReminderRenewal,renewFromTelegram,telegramRenewalHistory,
+    telegramRenewalId:fields=>reminderPeriod(fields,false).id,
+  };
 }
