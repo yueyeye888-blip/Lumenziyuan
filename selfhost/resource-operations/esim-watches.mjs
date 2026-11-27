@@ -13,9 +13,12 @@ export function openEsimWatches(root) {
 
   const select = db.prepare('SELECT esim_tran_no, watched_at FROM esim_resource_watches');
   const contains = db.prepare('SELECT 1 FROM esim_resource_watches WHERE esim_tran_no=?');
+  const revision = db.prepare('SELECT watched_at FROM esim_resource_watches WHERE esim_tran_no=?');
   const watch = db.prepare(`INSERT INTO esim_resource_watches (esim_tran_no, watched_at)
     VALUES (?,?) ON CONFLICT (esim_tran_no) DO UPDATE SET watched_at=excluded.watched_at`);
   const remove = db.prepare('DELETE FROM esim_resource_watches WHERE esim_tran_no=?');
+  const removeRevision = db.prepare('DELETE FROM esim_resource_watches WHERE esim_tran_no=? AND watched_at=?');
+  let lastWatchTime = 0;
 
   return {
     list() {
@@ -24,8 +27,15 @@ export function openEsimWatches(root) {
     has(id) {
       return Boolean(contains.get(id));
     },
+    get(id) {
+      return revision.get(id)?.watched_at ?? null;
+    },
+    removeIfWatchedAt(id, watchedAt) {
+      return typeof watchedAt === 'string' && removeRevision.run(id, watchedAt).changes === 1;
+    },
     set(ids, watching) {
-      const watchedAt = watching ? new Date().toISOString() : null;
+      if (watching) lastWatchTime = Math.max(Date.now(),lastWatchTime + 1);
+      const watchedAt = watching ? new Date(lastWatchTime).toISOString() : null;
       db.exec('BEGIN IMMEDIATE');
       try {
         for (const id of ids) {

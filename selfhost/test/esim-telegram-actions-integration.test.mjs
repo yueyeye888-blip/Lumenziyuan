@@ -3,6 +3,8 @@ import test from 'node:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { createHash } from 'node:crypto';
 import { createTelegramDirectActions } from '../resource-operations/esim-telegram-actions.mjs';
 import { telegramReminderPayload } from '../resource-operations/resource-operations.mjs';
 
@@ -12,21 +14,25 @@ const dedicated='200:dedicated';
 const baseUser={id:'owner',email:'owner@example.test',enabled:true};
 const batchId='LR-12345678-1234-4123-8123-123456789abc';
 
-function fixture(t, overrides={}) {
+function fixture(t, overrides={}, seed) {
   const root=mkdtempSync(join(tmpdir(),'esim-telegram-actions-'));
   mkdirSync(join(root,'data'));
   const config={origin:'https://example.test',bindings:{TELEGRAM_DIRECT_ACTIONS:'1',TELEGRAM_ESIM_BOT_TOKEN:dedicated,
     TELEGRAM_ESIM_CHAT_ID:'55',TELEGRAM_DIRECT_ACTOR_ID:'55',...overrides}};
   let clock=Date.parse('2030-01-01T12:00:00Z');
-  let updates=[], owner=baseUser, previewEnabled=true, profile, settlementStatus='succeeded', failNotice=false, throwSubmit=false;
+  let updates=[], owner=baseUser, previewEnabled=true, profile, settlementStatus='succeeded', failNotice=false, throwSubmit=false, failEdit=false;
   const item={esimTranNo:'line-1',packageName:'Three gigabytes',packageCode:'PLAN-1',iccid:'1234567890123456789',expiredTime:new Date(clock+4*day).toISOString()};
   profile=item;
-  const calls=[], submitted=[], receipts=new Map(), watches=new Set();
+  const calls=[], submitted=[], receipts=new Map(), watches=new Map();
   const result=()=>({id:batchId,records:[{batchId,status:settlementStatus,receipt:settlementStatus==='succeeded'?'receipt-example':null,
     amountRaw:12345,expiredTime:new Date(clock+30*day).toISOString(),error:null}]});
-  const options={root,config,currentAdmin:()=>owner,loadSharedSettings:async()=>shared,now:()=>clock,autoStart:false,
+  let lastRevision=0;
+  const options={root,config,currentAdmin:()=>owner,loadSharedSettings:async()=>shared,now:()=>clock,autoStart:false,markupPause:async()=>{},
     overview:async()=>({status:200,data:{history:{items:[profile]}}}),
-    watches:{has:id=>watches.has(id),set(ids,watching){for(const id of ids) watching?watches.add(id):watches.delete(id);}},
+    watches:{has:id=>watches.has(id),get:id=>watches.get(id)||null,
+      set(ids,watching){const stamp=watching?new Date(lastRevision=Math.max(clock,lastRevision+1)).toISOString():null;
+        for(const id of ids) watching?watches.set(id,stamp):watches.delete(id);return stamp;},
+      removeIfWatchedAt(id,expected){return watches.get(id)===expected&&watches.delete(id);}},
     purchases:{
       previewReminderRenewal:async(_user,fields)=>{
         assert.equal(fields.resourceId,item.esimTranNo);
@@ -53,9 +59,13 @@ function fixture(t, overrides={}) {
       if (method==='getWebhookInfo') return {url:''};
       if (method==='getUpdates') { const batch=updates;updates=[];return batch; }
       if (method==='sendMessage'&&failNotice) { failNotice=false;throw Error('Transient notice failure'); }
+      if (method==='editMessageReplyMarkup'&&failEdit&&data.reply_markup.inline_keyboard.flat().some(button=>button.text.includes(failEdit))) {
+        failEdit=false;throw Error('Transient edit failure');
+      }
       return true;
     },
   };
+  if (seed) seed({root,item,clock,watches});
   let actions=createTelegramDirectActions(options);
   t.after(async()=>{await actions.close();rmSync(root,{recursive:true,force:true});});
   const settle=async()=>{for(let i=0;i<10;i++) await new Promise(resolve=>setImmediate(resolve));};
@@ -76,14 +86,19 @@ function fixture(t, overrides={}) {
       message:{message_id:messageId,date:100,chat:{id:55,type:'private'},from:{id:200,is_bot:true}},...changes}};
   }
   return {
-    get actions(){return actions;}, config, item, calls, submitted, watches, options,issue,query,settle,
+    get actions(){return actions;}, config, item, calls, submitted, watches, options,issue,query,settle,root,
     async step(batch=[]) {updates=batch;await actions.runOnce?.();await settle();},
     advance:ms=>clock+=ms, state:status=>settlementStatus=status,
-    failNotice:()=>failNotice=true, throwSubmit:()=>throwSubmit=true,
+    failNotice:()=>failNotice=true, failEdit:(status)=>failEdit=status, throwSubmit:()=>throwSubmit=true,
     disablePreview:()=>previewEnabled=false, setProfile:value=>profile=value,
     disableOwner:()=>owner={...baseUser,enabled:false},
     async restart(){await actions.close();actions=createTelegramDirectActions(options);},
     notices:()=>calls.filter(call=>call.method==='sendMessage').map(call=>call.data.text),
+    markup:(messageId)=>calls.filter(call=>call.method==='editMessageReplyMarkup'&&call.data.message_id===messageId).at(-1)?.data.reply_markup.inline_keyboard.flat(),
+    persisted:messageId=>{
+      const db=new DatabaseSync(join(root,'data','site-esim-telegram-actions.sqlite'),{readOnly:true});
+      try {return db.prepare('SELECT * FROM esim_telegram_actions WHERE message_id=?').get(messageId);}finally{db.close();}
+    },
   };
 }
 
@@ -118,6 +133,10 @@ test('one-click callbacks bind one original quote to one provider renewal across
   assert.match(f.notices()[0],/供应商回执：receipt-example/);
   assert.match(f.notices()[0],/新到期时间：/);
   assert.match(f.notices()[0],/金额：US\$ 1\.2345/);
+  assert.deepEqual(f.markup(10).map(button=>button.text),['✅ 已续订']);
+  assert.deepEqual(f.markup(11).map(button=>button.text),['✅ 已续订']);
+  await f.step([f.query(f.markup(10)[0].callback_data)]);
+  assert.equal(f.submitted.length,1,'status button cannot renew');
   await f.restart();
   await f.step([f.query(lastDay.reply_markup.inline_keyboard[0][0].callback_data,11)]);
   assert.equal(f.submitted.length,1,'persisted selection prevents duplicate charge after restart');
@@ -174,6 +193,106 @@ test('watch button verifies original expiry, and disabled administrator cannot a
   await f.step([f.query(other.reply_markup.inline_keyboard[0][0].callback_data,11)]);
   assert.equal(f.submitted.length,0);
   assert.equal(f.actions.status.ready,false);
+});
+
+test('watch can be withdrawn from either reminder, restoring fresh controls and invalidating old callbacks',async t=>{
+  const f=fixture(t);
+  await f.step();
+  const first=await f.issue(10),lastDay=await f.issue(11);
+  const oldRenew=first.reply_markup.inline_keyboard[0][0].callback_data;
+  const oldWatch=first.reply_markup.inline_keyboard[1][0].callback_data;
+  await f.step([f.query(oldWatch)]);
+  for (const id of [10,11]) assert.deepEqual(f.markup(id).map(button=>button.text),['👁 已加入观察组','撤回观察组']);
+  assert.ok(f.watches.has(f.item.esimTranNo));
+  const undo=f.markup(11).find(button=>button.text==='撤回观察组').callback_data;
+  await f.step([f.query(undo,10),f.query(undo,11,{from:{id:999,is_bot:false}})]);
+  assert.ok(f.watches.has(f.item.esimTranNo));
+  await f.step([f.query(undo,11),f.query(undo,11)]);
+  assert.equal(f.watches.size,0);
+  assert.equal(f.submitted.length,0);
+  for (const id of [10,11]) {
+    assert.deepEqual(f.markup(id).map(button=>button.text),['↩ 已撤回观察组','续订','不续订并加入观察组']);
+    assert.equal(f.persisted(id).button_generation,1);
+  }
+  await f.restart();
+  await f.step([f.query(oldRenew),f.query(oldWatch),f.query(undo,11),f.query(lastDay.reply_markup.inline_keyboard[0][0].callback_data,11)]);
+  assert.equal(f.submitted.length,0,'stale buttons must never cause a charge');
+  assert.equal(f.watches.size,0);
+  const freshRenew=f.markup(10).find(button=>button.text==='续订').callback_data;
+  assert.notEqual(freshRenew,oldRenew);
+  await f.step([f.query(freshRenew),f.query(freshRenew)]);
+  assert.equal(f.submitted.length,1);
+  assert.deepEqual(f.markup(10).map(button=>button.text),['✅ 已续订']);
+  assert.deepEqual(f.markup(11).map(button=>button.text),['✅ 已续订']);
+});
+
+test('withdrawal respects newer observation revisions and never restores expired paid actions',async t=>{
+  const f=fixture(t);
+  await f.step();
+  const original=await f.issue();
+  await f.step([f.query(original.reply_markup.inline_keyboard[1][0].callback_data)]);
+  const undo=f.markup(10).find(button=>button.text==='撤回观察组').callback_data;
+  f.advance(1000);
+  const newWatch=f.options.watches.set([f.item.esimTranNo],true);
+  await f.step([f.query(undo)]);
+  assert.equal(f.options.watches.get(f.item.esimTranNo),newWatch);
+  assert.deepEqual(f.markup(10).map(button=>button.text),['👁 观察组状态已更新']);
+  f.options.watches.set([f.item.esimTranNo],false);
+  await f.step();
+  const watchAgain=f.markup(10).find(button=>button.text==='不续订并加入观察组').callback_data;
+  await f.step([f.query(watchAgain)]);
+  const undoAgain=f.markup(10).find(button=>button.text==='撤回观察组').callback_data;
+  f.advance(5*day);
+  await f.step([f.query(undoAgain)]);
+  assert.equal(f.watches.size,0);
+  assert.ok(f.markup(10).every(button=>button.text!=='续订'));
+  assert.equal(f.submitted.length,0);
+});
+
+test('successful notice and failed inline edit reconcile independently after restart',async t=>{
+  const f=fixture(t);
+  await f.step();
+  const message=await f.issue();
+  f.failEdit('已续订');
+  await f.step([f.query(message.reply_markup.inline_keyboard[0][0].callback_data)]);
+  assert.equal(f.notices().filter(text=>text.includes('续订成功')).length,1);
+  assert.equal(f.persisted(10).markup_dirty,1);
+  await f.restart();
+  f.advance(31_000);
+  await f.step();
+  assert.equal(f.persisted(10).markup_dirty,0);
+  assert.deepEqual(f.markup(10).map(button=>button.text),['✅ 已续订']);
+  assert.equal(f.notices().filter(text=>text.includes('续订成功')).length,1);
+  assert.equal(f.submitted.length,1);
+});
+
+test('legacy terminal receipt is backfilled without altering untouched message or sending another result',async t=>{
+  const f=fixture(t,{},({root,item,clock})=>{
+    const db=new DatabaseSync(join(root,'data','site-esim-telegram-actions.sqlite'));
+    try {
+      db.exec(`CREATE TABLE esim_telegram_actions (
+        token TEXT PRIMARY KEY, cycle TEXT NOT NULL, bot_key TEXT NOT NULL, actor TEXT NOT NULL,
+        user_id TEXT NOT NULL, resource_id TEXT NOT NULL, expires_at TEXT NOT NULL, label TEXT NOT NULL,
+        package_code TEXT, plan_code TEXT, price_raw INTEGER, plan TEXT, issued_at INTEGER, batch_id TEXT,
+        message_id INTEGER, created_at INTEGER NOT NULL, operation TEXT, phase TEXT,
+        notice TEXT, notified INTEGER NOT NULL DEFAULT 0, retry_at INTEGER NOT NULL DEFAULT 0)`);
+      const insert=db.prepare(`INSERT INTO esim_telegram_actions (token,cycle,bot_key,actor,user_id,resource_id,expires_at,label,message_id,created_at,operation,phase,notice,notified,retry_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+      const key=createHash('sha256').update(dedicated).digest('hex');
+      insert.run('a'.repeat(24),'confirmed',key,'55',baseUser.id,item.esimTranNo,item.expiredTime,'Three gigabytes',10,clock-12_000,'renew','done',
+        'Yorke AI · eSIM 续订结果\n续订成功\n供应商回执：receipt-example',1,clock+18_000);
+      insert.run('b'.repeat(24),'unselected',key,'55',baseUser.id,'line-2',item.expiredTime,'Not selected',11,clock-12_000,null,null,null,0,0);
+      insert.run('c'.repeat(24),'incomplete',key,'55',baseUser.id,'line-3',item.expiredTime,'续订成功相关套餐',12,clock-12_000,'renew','done',
+        '续订未完成\n续订成功相关套餐',1,clock+18_000);
+    } finally {db.close();}
+  });
+  await f.step();
+  assert.deepEqual(f.markup(10).map(button=>button.text),['✅ 已续订']);
+  assert.equal(f.markup(11),undefined);
+  assert.deepEqual(f.markup(12).map(button=>button.text),['⚠️ 续订未完成']);
+  assert.equal(f.notices().length,0);
+  assert.equal(f.submitted.length,0);
+  assert.equal(f.persisted(10).markup_dirty,0);
 });
 
 test('missing opt-in and shared token fail closed without polling; unknown update pauses without acknowledgement',async t=>{

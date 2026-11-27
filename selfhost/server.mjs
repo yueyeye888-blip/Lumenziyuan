@@ -87,7 +87,7 @@ const server = https.createServer(tls, async (req, res) => {
     const allowedOrigins = new Set([origin, ...(config.aliasOrigins || [])]);
     if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin && !allowedOrigins.has(req.headers.origin)) return json(res, 403, { error: '请求来源不匹配' });
     if (serveLocaleAsset(req,res,url.pathname)) return;
-    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '2.0.1' });
+    if (url.pathname === '/__host/health') return json(res, 200, { ok: true, sourceVersion: 29, commerceVersion: '2.0.2' });
     // Machine callbacks use the existing order secret, never a browser session.
     if (url.pathname === '/api/address-orders/callback') {
       if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
@@ -223,7 +223,7 @@ const server = https.createServer(tls, async (req, res) => {
     console.error(JSON.stringify({ event: 'request_failed', path: req.url?.split('?')[0], time: new Date().toISOString() }));
   }
 });
-server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '2.0.1', port: config.port || 8443 })));
+server.listen(config.port || 8443, process.env.LUMEN_LISTEN_HOST || '0.0.0.0', () => console.log(JSON.stringify({ event: 'listening', sourceVersion: 29, commerceVersion: '2.0.2', port: config.port || 8443 })));
 const cleanup = setInterval(() => { identities.cleanup(); for (const [key, value] of attempts) if (value.until < Date.now()) attempts.delete(key); }, 60_000);
 let stopping = false;
 for (const event of ['SIGTERM', 'SIGINT']) process.on(event, () => {

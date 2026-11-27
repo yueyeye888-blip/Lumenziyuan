@@ -27,6 +27,25 @@ const packageList = [
   {slug:'FR_1',packageCode:'FR123',name:'France 1GB',price:13_000,currencyCode:'USD',dataType:1,duration:7},
 ];
 
+test('observation undo removes only the matching watch revision', async () => {
+  const root = mkdtempSync(path.join(tmpdir(),'lumen-esim-watch-revision-'));
+  mkdirSync(path.join(root,'data'));
+  const watches = openEsimWatches(root);
+  try {
+    const first = watches.set(['CARD'],true);
+    assert.equal(watches.get('CARD'),first);
+    assert.equal(watches.removeIfWatchedAt('CARD','invalid-revision'),false);
+    watches.set(['CARD'],false);
+    const second=watches.set(['CARD'],true);
+    assert.notEqual(second,first);
+    assert.equal(watches.removeIfWatchedAt('CARD',first),false);
+    assert.equal(watches.get('CARD'),second);
+    assert.equal(watches.removeIfWatchedAt('CARD',second),true);
+    assert.equal(watches.get('CARD'),null);
+    assert.equal(watches.removeIfWatchedAt('CARD',second),false);
+  } finally { watches.close(); rmSync(root,{recursive:true,force:true}); }
+});
+
 test('the watch group is shared for owners and administrators, with whole-batch authorization',async () => {
   const root = mkdtempSync(path.join(tmpdir(),'lumen-esim-watch-'));
   mkdirSync(path.join(root,'data'));

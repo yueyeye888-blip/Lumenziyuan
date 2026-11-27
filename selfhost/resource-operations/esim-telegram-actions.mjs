@@ -1,10 +1,11 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { setTimeout as sleep } from 'node:timers/promises';
 import path from 'node:path';
 
 const validActor = /^[1-9]\d{0,15}$/;
 const validResource = /^[A-Za-z0-9_-]{1,100}$/;
-const callbackPattern = /^yorke-esim:([rw]):([a-f0-9]{24})$/;
+const callbackPattern = /^yorke-esim:([rwus]):([a-f0-9]{24})(?::([0-9]{1,9}))?$/;
 const prefix = 'yorke-esim:';
 const day = 86_400_000;
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -15,7 +16,14 @@ const dateLabel = value => Number.isFinite(expiryTime(value))
   ? new Intl.DateTimeFormat('zh-CN',{dateStyle:'short',timeStyle:'short',timeZone:'Asia/Singapore'}).format(expiryTime(value))+'（UTC+8）' : null;
 
 class TelegramError extends Error {
-  constructor(status) { super('Telegram service unavailable'); this.status = status; }
+  constructor(status,description,retryAfter) {
+    super('Telegram service unavailable');
+    this.status = status;
+    const detail=String(description || '').toLowerCase();
+    this.notModified=status===400&&detail.includes('message is not modified');
+    this.editGone=status===400&&/message to edit not found|message can't be edited|message can not be edited/.test(detail);
+    this.retryAfter=Number(retryAfter)||0;
+  }
 }
 
 async function telegram(token, method, payload, signal) {
@@ -24,7 +32,7 @@ async function telegram(token, method, payload, signal) {
     signal:signal ? AbortSignal.any([signal,AbortSignal.timeout(20_000)]) : AbortSignal.timeout(10_000),
   });
   const data = await response.json();
-  if (!response.ok || !data.ok) throw new TelegramError(Number(data?.error_code) || response.status);
+  if (!response.ok || !data.ok) throw new TelegramError(Number(data?.error_code) || response.status,data?.description,data?.parameters?.retry_after);
   return data.result;
 }
 
@@ -45,21 +53,59 @@ function openActions(root) {
     CREATE TABLE IF NOT EXISTS esim_telegram_offsets (
       bot_key TEXT PRIMARY KEY, next INTEGER NOT NULL, updated_at INTEGER NOT NULL
     );`);
+  const columns=new Set(db.prepare('PRAGMA table_info(esim_telegram_actions)').all().map(row=>row.name));
+  const migration={ui_state:'TEXT',watch_revision:'TEXT',button_generation:'INTEGER NOT NULL DEFAULT 0',
+    restore_actions:'INTEGER NOT NULL DEFAULT 1',markup_dirty:'INTEGER NOT NULL DEFAULT 1',
+    markup_revision:'INTEGER NOT NULL DEFAULT 0',markup_retry_at:'INTEGER NOT NULL DEFAULT 0'};
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    for (const [name,definition] of Object.entries(migration)) {
+      if (!columns.has(name)) db.exec(`ALTER TABLE esim_telegram_actions ADD COLUMN ${name} ${definition}`);
+    }
+    if (!columns.has('markup_dirty')) db.exec(`UPDATE esim_telegram_actions AS row SET markup_dirty=0
+      WHERE NOT EXISTS(SELECT 1 FROM esim_telegram_actions WHERE cycle=row.cycle AND operation IS NOT NULL)`);
+    db.exec('COMMIT');
+  } catch(error) {db.exec('ROLLBACK');throw error;}
   const insert = db.prepare(`INSERT INTO esim_telegram_actions
     (token,cycle,bot_key,actor,user_id,resource_id,expires_at,label,package_code,plan_code,price_raw,plan,issued_at,batch_id,created_at)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const get = db.prepare('SELECT * FROM esim_telegram_actions WHERE token=?');
   const byCycle = db.prepare('SELECT * FROM esim_telegram_actions WHERE cycle=? AND operation IS NOT NULL');
   const bind = db.prepare('UPDATE esim_telegram_actions SET message_id=? WHERE token=? AND message_id IS NULL');
-  const select = db.prepare("UPDATE esim_telegram_actions SET operation=?,phase='processing' WHERE token=? AND operation IS NULL AND message_id IS NOT NULL");
+  const select = db.prepare(`UPDATE esim_telegram_actions SET operation=?,phase='processing',ui_state=?,watch_revision=NULL,
+    notice=NULL,notified=0,retry_at=0 WHERE token=? AND operation IS NULL AND message_id IS NOT NULL AND button_generation=? AND restore_actions=1`);
   const result = db.prepare(`UPDATE esim_telegram_actions SET phase=?,notice=?,notified=CASE WHEN notice IS ? THEN notified ELSE 0 END,retry_at=? WHERE token=?`);
+  const state = db.prepare('UPDATE esim_telegram_actions SET ui_state=?,watch_revision=? WHERE token=?');
+  const dirty = db.prepare('UPDATE esim_telegram_actions SET markup_dirty=1,markup_revision=markup_revision+1,markup_retry_at=0 WHERE cycle=?');
+  const beginUndo = db.prepare("UPDATE esim_telegram_actions SET phase='undoing',ui_state='undoing',retry_at=0 WHERE token=? AND operation='watch' AND phase='done' AND ui_state='watched'");
+  const release = db.prepare(`UPDATE esim_telegram_actions SET operation=NULL,phase='undone',ui_state='undone',watch_revision=NULL,
+    notice=?,notified=?,retry_at=? WHERE token=? AND operation='watch'`);
+  const rotate = db.prepare('UPDATE esim_telegram_actions SET button_generation=button_generation+1,restore_actions=? WHERE cycle=?');
+  const legacy = db.prepare('SELECT * FROM esim_telegram_actions WHERE bot_key=? AND actor=? AND user_id=? AND operation IS NOT NULL AND ui_state IS NULL');
+  const watched = db.prepare("SELECT * FROM esim_telegram_actions WHERE bot_key=? AND actor=? AND user_id=? AND operation='watch' AND phase='done' AND ui_state IN ('watched','watched_external')");
+  const dirtyRows = db.prepare(`SELECT row.* FROM esim_telegram_actions AS row WHERE row.bot_key=? AND row.actor=? AND row.user_id=?
+    AND row.message_id IS NOT NULL AND row.markup_dirty=1 AND row.markup_retry_at<=?
+    ORDER BY (row.operation IS NOT NULL) DESC,EXISTS(SELECT 1 FROM esim_telegram_actions WHERE cycle=row.cycle AND operation IS NOT NULL) DESC,row.created_at DESC LIMIT 1`);
+  const cleanMarkup = db.prepare('UPDATE esim_telegram_actions SET markup_dirty=0 WHERE token=? AND markup_revision=?');
+  const retryMarkup = db.prepare('UPDATE esim_telegram_actions SET markup_retry_at=? WHERE token=? AND markup_revision=?');
   const pending = db.prepare(`SELECT * FROM esim_telegram_actions WHERE bot_key=? AND actor=? AND user_id=?
-    AND operation IS NOT NULL AND retry_at<=? AND (phase!='done' OR notified=0) ORDER BY retry_at LIMIT 20`);
+    AND (operation IS NOT NULL OR (phase='undone' AND notice IS NOT NULL)) AND retry_at<=?
+    AND (phase NOT IN ('done','undone') OR notified=0) ORDER BY retry_at LIMIT 20`);
   const notified = db.prepare('UPDATE esim_telegram_actions SET notified=1 WHERE token=? AND notice=?');
   const defer = db.prepare('UPDATE esim_telegram_actions SET retry_at=? WHERE token=?');
   const offset = db.prepare('SELECT next,updated_at FROM esim_telegram_offsets WHERE bot_key=?');
   const saveOffset = db.prepare(`INSERT INTO esim_telegram_offsets VALUES(?,?,?) ON CONFLICT(bot_key) DO UPDATE SET next=excluded.next,updated_at=excluded.updated_at`);
   const clearOffset = db.prepare('DELETE FROM esim_telegram_offsets WHERE bot_key=?');
+  function transaction(work) {
+    db.exec('BEGIN IMMEDIATE');
+    try { const value=work(); db.exec('COMMIT'); return value; }
+    catch (error) { db.exec('ROLLBACK'); throw error; }
+  }
+  function updateState(row,ui,revision) {
+    if (row.ui_state===ui&&row.watch_revision===revision) return;
+    state.run(ui,revision,row.token);
+    dirty.run(row.cycle);
+  }
   return {
     create(fields) {
       const token = randomBytes(12).toString('hex');
@@ -68,21 +114,55 @@ function openActions(root) {
         fields.issuedAt ?? null,fields.batchId ?? null,fields.now);
       // Unselected messages are useless after their expiry and Telegram retains callbacks for only 24 hours.
       // Keep selected rows indefinitely for audit and duplicate-charge protection.
-      db.prepare('DELETE FROM esim_telegram_actions WHERE operation IS NULL AND created_at<?').run(fields.now-7*day);
+      db.prepare(`DELETE FROM esim_telegram_actions AS row WHERE operation IS NULL AND phase IS NULL AND created_at<?
+        AND NOT EXISTS(SELECT 1 FROM esim_telegram_actions WHERE cycle=row.cycle AND operation IS NOT NULL)`).run(fields.now-7*day);
       return token;
     },
     get: token=>get.get(token),
-    bind(token,id) { if (bind.run(id,token).changes!==1) throw Error('Telegram reminder message could not be bound'); },
-    claim(row,operation) {
-      db.exec('BEGIN IMMEDIATE');
-      try {
-        const selected = byCycle.get(row.cycle);
-        const accepted = !selected && select.run(operation,row.token).changes===1;
-        db.exec('COMMIT');
-        return accepted;
-      } catch (error) { db.exec('ROLLBACK'); throw error; }
+    selected: cycle=>byCycle.get(cycle),
+    bind(token,id) {
+      transaction(()=>{
+        if (bind.run(id,token).changes!==1) throw Error('Telegram reminder message could not be bound');
+        const row=get.get(token);
+        if (!byCycle.get(row.cycle)) cleanMarkup.run(token,row.markup_revision);
+      });
     },
-    outcome(token,phase,message,when) { result.run(phase,message,message,when,token); },
+    claim(row,operation) {
+      return transaction(()=>{
+        const selected = byCycle.get(row.cycle);
+        const accepted = !selected && select.run(operation,operation==='renew'?'renewing':'watching',row.token,row.button_generation).changes===1;
+        if (accepted) dirty.run(row.cycle);
+        return accepted;
+      });
+    },
+    outcome(token,phase,message,when,ui,revision=null) {
+      transaction(()=>{
+        const row=get.get(token);
+        result.run(phase,message,message,when,token);
+        updateState(row,ui,revision);
+      });
+    },
+    setState(row,ui,revision=null) { transaction(()=>updateState(row,ui,revision)); },
+    beginUndo(row) {
+      return transaction(()=>{
+        const accepted=beginUndo.run(row.token).changes===1;
+        if (accepted) dirty.run(row.cycle);
+        return accepted;
+      });
+    },
+    finishUndo(row,{message,notify,restore,now}) {
+      return transaction(()=>{
+        if (release.run(message,notify?0:1,now,row.token).changes!==1) return false;
+        rotate.run(restore?1:0,row.cycle);
+        dirty.run(row.cycle);
+        return true;
+      });
+    },
+    legacy: session=>legacy.all(session.botKey,session.actor,session.user.id),
+    watched: session=>watched.all(session.botKey,session.actor,session.user.id),
+    dirty: (session,now)=>dirtyRows.get(session.botKey,session.actor,session.user.id,now),
+    markupSaved: row=>cleanMarkup.run(row.token,row.markup_revision),
+    markupRetry: (row,when)=>retryMarkup.run(when,row.token,row.markup_revision),
     pending: (session,now)=>pending.all(session.botKey,session.actor,session.user.id,now),
     notified: (row)=>notified.run(row.token,row.notice),
     defer: (token,when)=>defer.run(when,token),
@@ -109,25 +189,61 @@ function renewalNotice(row,outcome) {
   const records=outcome?.records;
   const record=Array.isArray(records)&&records.length===1&&records[0].batchId===row.batch_id?records[0]:null;
   const lines=[`Yorke AI · eSIM 续订结果`,row.label,`续订套餐：${row.plan || '原套餐'}`];
-  if (!record) return {phase:'pending',message:[...lines,'续订结果暂未确认，系统不会自动再次提交。请核对续订记录。'].join('\n')};
+  if (!record) return {phase:'pending',ui:'renew_uncertain',message:[...lines,'续订结果暂未确认，系统不会自动再次提交。请核对续订记录。'].join('\n')};
   if (record.status==='succeeded'&&record.receipt) {
     lines.push('续订成功',`金额：US$ ${dollars(record.amountRaw)}`,`供应商回执：${clean(record.receipt)}`);
     const expires=dateLabel(record.expiredTime);
     if (expires) lines.push(`新到期时间：${expires}`);
-    return {phase:'done',message:lines.join('\n')};
+    return {phase:'done',ui:'renewed',message:lines.join('\n')};
   }
-  if (['rejected','not_sent'].includes(record.status)) return {phase:'done',message:[...lines,'续订未完成',clean(record.error || '供应商拒绝或未发送本次续订。',240)].join('\n')};
+  if (['rejected','not_sent'].includes(record.status)) return {phase:'done',ui:'renew_failed',message:[...lines,'续订未完成',clean(record.error || '供应商拒绝或未发送本次续订。',240)].join('\n')};
   const reason=record.status==='uncertain'?'供应商结果待核对，请勿重复续订。':'续订已接收，等待供应商结果。';
-  return {phase:'pending',message:[...lines,reason].join('\n')};
+  return {phase:'pending',ui:record.status==='uncertain'?'renew_uncertain':'renewing',message:[...lines,reason].join('\n')};
 }
 
-export function createTelegramDirectActions({root,config,currentAdmin,loadSharedSettings,purchases,watches,overview,transport=telegram,now=Date.now,autoStart=true}) {
+const labels={renewing:'⏳ 续订处理中',renewed:'✅ 已续订',renew_uncertain:'⏳ 续订待核对',renew_failed:'⚠️ 续订未完成',
+  watching:'⏳ 正在加入观察组',watched:'👁 已加入观察组',watched_external:'👁 观察组状态已更新',watch_failed:'⚠️ 未加入观察组',
+  undoing:'⏳ 正在撤回观察组',undone:'↩ 已撤回观察组',expired:'提醒已到期'};
+const callbackData=(row,kind)=>`${prefix}${kind}:${row.token}${row.button_generation?':'+row.button_generation:''}`;
+const hasQuote=row=>Boolean(row.batch_id&&Number.isSafeInteger(row.price_raw)&&row.price_raw>=0&&row.package_code&&row.plan_code&&row.issued_at);
+const samePrincipal=(a,b)=>a.bot_key===b.bot_key&&a.actor===b.actor&&a.user_id===b.user_id;
+function legacyState(row) {
+  const lines=String(row.notice || '').split('\n');
+  if (row.operation==='renew') {
+    if (row.phase==='done') return lines.includes('续订成功')&&lines.some(line=>/^供应商回执：\S/.test(line))?'renewed':'renew_failed';
+    return row.phase==='pending'&&lines.some(line=>/待核对|暂未确认|无法核对/.test(line))?'renew_uncertain':'renewing';
+  }
+  if (row.phase==='done') return lines.includes('已加入观察组，停止发送到期提醒。')?'watched':'watch_failed';
+  return row.phase==='undoing'?'undoing':'watching';
+}
+function markupFor(row,selected,origin,at) {
+  const status=text=>[{text,callback_data:callbackData(row,'s')}];
+  if (selected) {
+    const ui=selected.ui_state||legacyState(selected);
+    const keyboard=[status(labels[ui] || '操作结果待核对')];
+    if (ui==='watched'&&selected.phase==='done'&&selected.watch_revision&&samePrincipal(row,selected)) {
+      keyboard.push([{text:'撤回观察组',callback_data:callbackData(row,'u')}]);
+    }
+    return keyboard;
+  }
+  const keyboard=row.button_generation?[status(labels.undone)]:[];
+  if (!row.restore_actions||expiryTime(row.expires_at)<=at) {
+    if (!keyboard.length) keyboard.push(status(labels.expired));
+    return keyboard;
+  }
+  const renewal=new URL('/',origin);renewal.searchParams.set('renewEsim',row.resource_id);
+  keyboard.push([hasQuote(row)?{text:'续订',callback_data:callbackData(row,'r')}:{text:'查看续订报价',url:renewal.href}]);
+  keyboard.push([{text:'不续订并加入观察组',callback_data:callbackData(row,'w')}]);
+  return keyboard;
+}
+
+export function createTelegramDirectActions({root,config,currentAdmin,loadSharedSettings,purchases,watches,overview,transport=telegram,now=Date.now,autoStart=true,markupPause=sleep}) {
   const requested=config.bindings?.TELEGRAM_DIRECT_ACTIONS==='1';
   const status={requested,ready:false,reason:requested?'waiting_for_dedicated_bot':'disabled'};
   // Do not open any database or consume bot updates unless explicitly opted in.
   if (!requested) return { status, sessionFor:()=>null, prepare:async()=>null, close(){} };
   const store=openActions(root);
-  let session, verifiedUntil=0, closed=false, paused=false, timer, inFlight, controller;
+  let session, verifiedUntil=0, closed=false, paused=false, timer, inFlight, controller, markupWork, markupRequested=false, nextMarkupAt=0;
   const active=new Map();
   const current=()=>{
     const user=currentAdmin();
@@ -180,6 +296,61 @@ export function createTelegramDirectActions({root,config,currentAdmin,loadShared
     if (!token) return;
     if (!Number.isSafeInteger(result?.message_id)||result.message_id<=0) throw Error('Telegram response omitted reminder message ID');
     store.bind(token,result.message_id);
+    if (session) kickMarkup(session);
+  }
+  function kickMarkup(available) {
+    if (closed||!status.ready||session!==available) return;
+    if (markupWork) { markupRequested=true;return; }
+    markupRequested=false;
+    markupWork=Promise.resolve().then(async()=>{
+      for (let count=0;count<10;count++) {
+        if (closed||!status.ready||session!==available||current()?.id!==available.user.id) return;
+        let row=store.dirty(available,now());
+        if (!row) return;
+        const wait=nextMarkupAt-now();
+        if (wait>0) await markupPause(wait);
+        if (closed||!status.ready||session!==available||current()?.id!==available.user.id) return;
+        row=store.get(row.token);
+        if (!row||!row.markup_dirty||row.markup_retry_at>now()||!authorized(row,available)) continue;
+        const keyboard=markupFor(row,store.selected(row.cycle),config.origin,now());
+        try {
+          await transport(available.botToken,'editMessageReplyMarkup',{chat_id:available.chatId,message_id:row.message_id,reply_markup:{inline_keyboard:keyboard}});
+          if (!closed) store.markupSaved(row);
+        } catch(error) {
+          if (!closed) {
+            if (error?.notModified||error?.editGone) store.markupSaved(row);
+            else store.markupRetry(row,now()+Math.max(30_000,(error?.retryAfter || 0)*1000));
+          }
+        }
+        nextMarkupAt=now()+1100;
+      }
+    }).catch(()=>{}).finally(()=>{
+      markupWork=null;
+      if (markupRequested&&!closed) kickMarkup(available);
+    });
+  }
+  function refreshWatchState(available) {
+    for (const row of store.legacy(available)) {
+      const ui=legacyState(row);
+      if (ui!=='watched') { store.setState(row,ui);continue; }
+      const revision=watches.get(row.resource_id);
+      if (!revision) {
+        store.finishUndo(row,{message:null,notify:false,restore:expiryTime(row.expires_at)>now(),now:now()});
+        continue;
+      }
+      const timestamp=expiryTime(revision);
+      // The old result was written immediately after the watch was set. Do not
+      // assign an undo to a watch created after that recorded result.
+      const resultAt=row.retry_at-30_000;
+      if (timestamp>=row.created_at&&timestamp>=resultAt-2000&&timestamp<=resultAt) store.setState(row,'watched',revision);
+      else store.setState(row,'watched_external');
+    }
+    for (const row of store.watched(available)) {
+      if (active.has(row.token)) continue;
+      const revision=watches.get(row.resource_id);
+      if (!revision) store.finishUndo(row,{message:null,notify:false,restore:expiryTime(row.expires_at)>now(),now:now()});
+      else if (row.ui_state==='watched'&&row.watch_revision!==revision) store.setState(row,'watched_external');
+    }
   }
   async function acknowledge(available,query,text) {
     try { await transport(available.botToken,'answerCallbackQuery',{callback_query_id:query.id,text}); } catch { /* Telegram callback acknowledgements expire; a claimed action remains durable. */ }
@@ -189,18 +360,16 @@ export function createTelegramDirectActions({root,config,currentAdmin,loadShared
     try {
       await transport(available.botToken,'sendMessage',{chat_id:available.chatId,text:row.notice});
       if (!closed) store.notified(row);
-      if (row.phase==='done') {
-        try { await transport(available.botToken,'editMessageReplyMarkup',{chat_id:available.chatId,message_id:row.message_id,reply_markup:{inline_keyboard:[]}}); } catch { /* The durable selection still prevents a duplicate. */ }
-      }
     } catch { /* Keep the result for delivery on a later healthy polling cycle. */ }
   }
-  function saveResult(token,phase,message) {
-    store.outcome(token,phase,message,now()+30_000);
+  function saveResult(available,token,phase,message,ui,revision=null) {
+    store.outcome(token,phase,message,now()+30_000,ui,revision);
+    kickMarkup(available);
   }
   async function applyRenewal(available,row,result) {
     if (closed) return;
     const notice=renewalNotice(row,result);
-    saveResult(row.token,notice.phase,notice.message);
+    saveResult(available,row.token,notice.phase,notice.message,notice.ui);
     await notify(available,store.get(row.token));
   }
   async function recover(available,row,validationError) {
@@ -213,9 +382,9 @@ export function createTelegramDirectActions({root,config,currentAdmin,loadShared
       if (error?.status===404) {
         // There is no receipt in the authoritative renewal ledger. Do not re-execute on restart.
         const message=validationError?`续订未提交：${clean(validationError,250)}\n请在资源中心重新获取报价。`:'服务中断或续订尚未确认，没有找到续订记录；系统不会自动重试，请在资源中心核对。';
-        saveResult(row.token,'done',`Yorke AI · eSIM 续订结果\n${row.label}\n${message}`);
+        saveResult(available,row.token,'done',`Yorke AI · eSIM 续订结果\n${row.label}\n${message}`,'renew_failed');
       } else {
-        saveResult(row.token,'pending',`Yorke AI · eSIM 续订结果\n${row.label}\n暂时无法核对续订状态，系统不会自动重复提交。`);
+        saveResult(available,row.token,'pending',`Yorke AI · eSIM 续订结果\n${row.label}\n暂时无法核对续订状态，系统不会自动重复提交。`,'renew_uncertain');
       }
       await notify(available,store.get(row.token));
     }
@@ -223,7 +392,7 @@ export function createTelegramDirectActions({root,config,currentAdmin,loadShared
   async function execute(available,row) {
     const user=current();
     if (!authorized(row,available)||closed) return;
-    let message;
+    let message,ui=row.operation==='watch'?'watch_failed':'renew_failed',revision=null;
     if (expiryTime(row.expires_at)<=now()) {
       message='该提醒已过期，请在资源中心重新确认。';
     } else if (row.operation==='watch') {
@@ -233,8 +402,12 @@ export function createTelegramDirectActions({root,config,currentAdmin,loadShared
         if (closed) return;
         if (current()?.id!==row.user_id||!item||expiryTime(item.expiredTime)!==expiryTime(row.expires_at)) {
           message='资源状态已变化，未加入观察组，请在资源中心核对。';
+        } else if (watches.get(row.resource_id)) {
+          ui='watched_external';
+          message='该资源已经在观察组，请在资源中心核对。';
         } else {
-          watches.set([row.resource_id],true);
+          revision=watches.set([row.resource_id],true);
+          ui='watched';
           message='已加入观察组，停止发送到期提醒。';
         }
       } catch { message='暂时无法核对资源，未加入观察组。'; }
@@ -253,7 +426,45 @@ export function createTelegramDirectActions({root,config,currentAdmin,loadShared
       return;
     }
     if (closed) return;
-    saveResult(row.token,'done',`Yorke AI · eSIM ${row.operation==='watch'?'观察组':'续订结果'}\n${row.label}\n${message}`);
+    saveResult(available,row.token,'done',`Yorke AI · eSIM ${row.operation==='watch'?'观察组':'续订结果'}\n${row.label}\n${message}`,ui,revision);
+    await notify(available,store.get(row.token));
+  }
+  async function executeUndo(available,row) {
+    if (closed||!authorized(row,available)) return;
+    let revision;
+    try {
+      revision=watches.get(row.resource_id);
+      if (revision&&revision===row.watch_revision) {
+        watches.removeIfWatchedAt(row.resource_id,revision);
+        revision=watches.get(row.resource_id);
+      }
+    } catch {
+      // The intent is durable; retry the conditional removal after the watch database recovers.
+      store.defer(row.token,now()+30_000);
+      return;
+    }
+    if (revision) {
+      saveResult(available,row.token,'done',`Yorke AI · eSIM 观察组\n${row.label}\n观察组状态已变化，未撤回当前观察记录，请在资源中心核对。`,'watched_external');
+      await notify(available,store.get(row.token));
+      return;
+    }
+    // Withdrawal is local. Only restore an old card's controls when the current
+    // expiry snapshot still matches; the payment core will recheck the quote cap on any real renewal.
+    let restore=false;
+    if (expiryTime(row.expires_at)>now()) {
+      try {
+        const received=await overview(current());
+        const item=received.status===200&&received.data.history?.items?.find(card=>card.esimTranNo===row.resource_id);
+        restore=Boolean(item&&expiryTime(item.expiredTime)===expiryTime(row.expires_at));
+      } catch { /* Withdrawal succeeded; a stale or unverified quote must not be offered again. */ }
+    }
+    if (closed||!authorized(row,available)) return;
+    const rewatched=Boolean(watches.get(row.resource_id));
+    restore=restore&&!rewatched&&expiryTime(row.expires_at)>now();
+    const message=rewatched?'已撤回本次观察操作，但该资源已有新的观察记录。':
+      '已撤回观察组，恢复到期提醒。'+(restore?'可重新选择操作。':'请在资源中心查看最新续订状态。');
+    store.finishUndo(row,{message:`Yorke AI · eSIM 观察组\n${row.label}\n${message}`,notify:true,restore,now:now()});
+    kickMarkup(available);
     await notify(available,store.get(row.token));
   }
   function track(token,work) {
@@ -275,9 +486,42 @@ export function createTelegramDirectActions({root,config,currentAdmin,loadShared
       await acknowledge(available,query,invalid);
       return;
     }
+    const selected=store.selected(row.cycle);
+    if (match[1]==='s') {
+      const ui=selected?(selected.ui_state||legacyState(selected)):row.button_generation?'undone':null;
+      await acknowledge(available,query,ui?labels[ui] || invalid:expiryTime(row.expires_at)<=now()?labels.expired:'请选择需要的操作。');
+      return;
+    }
+    if (Number(match[3] || 0)!==row.button_generation) {
+      await acknowledge(available,query,'此提醒的操作已更新，请使用最新按钮。');
+      return;
+    }
+    if (match[1]==='u') {
+      if (!selected||!samePrincipal(selected,row)||selected.operation!=='watch'||selected.phase!=='done'||
+          selected.ui_state!=='watched'||!selected.watch_revision) {
+        await acknowledge(available,query,'此观察记录已变化或无法撤回，请核对最新状态。');
+        return;
+      }
+      if (active.has(selected.token)) {
+        await acknowledge(available,query,'正在完成上一操作，请稍后再试。');
+        return;
+      }
+      if (!store.beginUndo(selected)) {
+        await acknowledge(available,query,'观察记录已更新，请核对最新状态。');
+        return;
+      }
+      await acknowledge(available,query,'正在撤回观察组。');
+      kickMarkup(available);
+      if (!closed) track(selected.token,()=>executeUndo(available,store.get(selected.token)));
+      return;
+    }
     const operation=match[1]==='r'?'renew':'watch';
-    if (expiryTime(row.expires_at)<=now()||operation==='renew'&&(!row.batch_id||!Number.isSafeInteger(row.price_raw)||!row.package_code||!row.plan_code||!row.issued_at)) {
+    if (!row.restore_actions||expiryTime(row.expires_at)<=now()||operation==='renew'&&!hasQuote(row)) {
       await acknowledge(available,query,invalid);
+      return;
+    }
+    if (active.has(row.token)) {
+      await acknowledge(available,query,'正在完成上一操作，请稍后再试。');
       return;
     }
     if (!store.claim(row,operation)) {
@@ -285,6 +529,7 @@ export function createTelegramDirectActions({root,config,currentAdmin,loadShared
       return;
     }
     await acknowledge(available,query,operation==='renew'?'已接收续订请求，结果将通过消息通知。':'正在加入观察组。');
+    kickMarkup(available);
     if (!closed) track(row.token,()=>execute(available,store.get(row.token)));
   }
   function reconcile(available) {
@@ -293,11 +538,13 @@ export function createTelegramDirectActions({root,config,currentAdmin,loadShared
       store.defer(row.token,now()+30_000);
       track(row.token,async()=>{
         if (closed||!authorized(row,available)) return;
-        if (row.phase==='done') return notify(available,row);
+        if (row.phase==='done'||row.phase==='undone') return notify(available,row);
+        if (row.phase==='undoing') return executeUndo(available,row);
         if (row.operation==='renew') return recover(available,row);
         // Watching is local and idempotent. Confirm interrupted writes without replaying an old request.
-        const message=watches.has(row.resource_id)?'已加入观察组，停止发送到期提醒。':'操作中断，尚未加入观察组，请在资源中心核对。';
-        saveResult(row.token,'done',`Yorke AI · eSIM 观察组\n${row.label}\n${message}`);
+        const observed=watches.has(row.resource_id);
+        const message=observed?'当前资源在观察组，原操作结果待核对，请在资源中心查看。':'操作中断，尚未加入观察组，请在资源中心核对。';
+        saveResult(available,row.token,'done',`Yorke AI · eSIM 观察组\n${row.label}\n${message}`,observed?'watched_external':'watch_failed');
         return notify(available,store.get(row.token));
       });
     }
@@ -312,6 +559,7 @@ export function createTelegramDirectActions({root,config,currentAdmin,loadShared
         if (!settings||!user) { status.ready=false;status.reason='dedicated_bot_or_owner_not_configured';session=null;return; }
         const available=await verify(settings,user);
         if (closed) return;
+        refreshWatchState(available);
         controller=new AbortController();
         const offset=store.next(available.botKey,now());
         // The filter is used only for the configured dedicated bot, never the shared bot.
@@ -336,6 +584,7 @@ export function createTelegramDirectActions({root,config,currentAdmin,loadShared
         }
         status.ready=true;status.reason='ready';
         reconcile(available);
+        kickMarkup(available);
       } catch(error) {
         if (closed) return;
         status.ready=false;
@@ -355,6 +604,7 @@ export function createTelegramDirectActions({root,config,currentAdmin,loadShared
     closed=true;status.ready=false;clearTimeout(timer);controller?.abort();
     if (inFlight) await inFlight;
     await Promise.allSettled([...active.values()]);
+    if (markupWork) await markupWork;
     store.close();
   }};
 }
