@@ -3,6 +3,8 @@ import { canManageAccounts, viewerFor } from './account-access.mjs';
 import { esimPrice, validDiscount } from '../commerce/pricing.mjs';
 import { readFileSync } from 'node:fs';
 import { webcrypto } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
+import path from 'node:path';
 import { trustedHeaders } from './auth.mjs';
 import { makeEsimWorkbook } from './esim-export.mjs';
 import { openEsimMailLog, normalizeRecipient } from './esim-mail-log.mjs';
@@ -15,6 +17,7 @@ const isEsimId = id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id
 const archiveBatchLimit = 10_000;
 const day = 86_400_000;
 const pollInterval = 30 * 60_000;
+const manualReminderId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const lastDate = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Singapore' });
 const validTime = value => {
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -139,6 +142,7 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
   const dispatch = (pathname, user) => mf.dispatchFetch(new URL(pathname,config.origin).href, { headers: trustedHeaders({}, user) });
   const progress = { everyMinutes: 30, lastCheckedAt: null, matched: 0, notified: 0, error: null, nextCheckAt: new Date(Date.now() + pollInterval).toISOString() };
   let checking = false;
+  let manualDb, activeManual, closing = false;
   const exports = new Set();
   const mailLog = openEsimMailLog(root);
   const archives = openEsimArchives(root);
@@ -286,6 +290,21 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       if (!admin(user)) { json(res,403,{error:'仅管理员可查看提醒状态'}); return true; }
       json(res,200,progress); return true;
     }
+    if (url.pathname === '/api/operations/reminders/send-current') {
+      const owner = directOwner();
+      if (!owner || owner.id !== user.id || !canManageAccounts(config,user)) { json(res,403,{error:'仅超级管理员可发送当前续订提醒。'}); return true; }
+      if (req.method !== 'POST') { json(res,405,{error:'请求方式不支持。'}); return true; }
+      if (req.headers.origin !== config.origin || !/^application\/json\b/i.test(req.headers['content-type'] || '')) {
+        json(res,403,{error:'请通过本站发送提醒。'}); return true;
+      }
+      let fields;
+      try { fields = JSON.parse(await readBody(req,4096)); } catch {}
+      if (typeof fields?.requestId !== 'string' || !manualReminderId.test(fields.requestId)) {
+        json(res,400,{error:'缺少有效的提醒发送编号。'}); return true;
+      }
+      const result = await startManualReminders(owner,fields.requestId.toLowerCase());
+      json(res,result.status,result.data); return true;
+    }
     if (!['/api/esim/export','/api/esim/email'].includes(url.pathname)) return false;
     const email = url.pathname === '/api/esim/email';
     if (req.method !== 'POST' || req.headers.origin !== config.origin) { json(res,405,{error:'请求方式不支持'}); return true; }
@@ -331,8 +350,127 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
     const state = JSON.parse(Buffer.from(data).toString('utf8'));
     return { botToken:state.botToken, chatId:bindings.TELEGRAM_CHAT_ID?.trim() || state.chatId };
   }
+
+  function reminderRuns() {
+    if (!manualDb) {
+      manualDb = new DatabaseSync(path.join(root,'data','site-esim-reminder-runs.sqlite'));
+      manualDb.exec(`PRAGMA busy_timeout=5000;
+        CREATE TABLE IF NOT EXISTS esim_reminder_runs (
+          request_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, receipt TEXT NOT NULL
+        ) WITHOUT ROWID`);
+    }
+    return manualDb;
+  }
+
+  // Both automatic and owner-requested reminders use the same callback builder and
+  // message-ID binding. The owner-requested run requires an actual renewal callback.
+  async function deliverReminder({settings,dedicated,user,batch,byId,canSend,requireDirect=false}) {
+    if (!canSend()) return false;
+    const payload = telegramReminderPayload(settings.chatId,config.origin,batch);
+    const token = dedicated && batch[0].kind === 'expiry'
+      ? await directActions.prepare(dedicated,user,batch[0],byId.get(batch[0].resource),payload) : null;
+    if (requireDirect && (!token || payload.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data !== `yorke-esim:r:${token}`)) return false;
+    if (!canSend()) return false;
+    let response, result;
+    try {
+      response = await fetch(`https://api.telegram.org/bot${settings.botToken}/sendMessage`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(12000)});
+      result = await response.json();
+    } catch {
+      throw Object.assign(Error('Telegram 发送结果待确认'),{uncertain:true});
+    }
+    if (!response.ok || !result.ok) throw Error(`Telegram 发送失败 (${response.status})`);
+    try { if (token) directActions.bind(token,result.result); }
+    catch { throw Object.assign(Error('Telegram 提醒按钮绑定待确认'),{uncertain:true}); }
+    return true;
+  }
+
+  async function startManualReminders(user,requestId) {
+    if (closing) return {status:503,data:{error:'服务正在关闭，请稍后再试。'}};
+    const store = reminderRuns();
+    const previous = store.prepare('SELECT user_id,receipt FROM esim_reminder_runs WHERE request_id=?').get(requestId);
+    const save = receipt => store.prepare('UPDATE esim_reminder_runs SET receipt=? WHERE request_id=?').run(JSON.stringify(receipt),requestId);
+    if (previous) {
+      if (previous.user_id !== user.id) return {status:403,data:{error:'请求编号不属于当前账号。'}};
+      const data = JSON.parse(previous.receipt);
+      if (data.status === 'running' && activeManual?.requestId !== requestId) {
+        data.status = 'interrupted';
+        if (data.inFlight) data.uncertain++;
+        data.inFlight = false;
+        data.error = '发送曾中断，请核对已收到的消息。同一编号不会再次发送。';
+        save(data);
+      }
+      return {status:data.status === 'running' ? 202 : 200,data};
+    }
+    if (checking) return {status:409,data:{error:'已有提醒检查或发送尚未完成，请稍后再试。'}};
+    checking = true;
+    let db, shared, dedicated;
+    try {
+      db = await mf.getD1Database('DB');
+      shared = await telegramSettings(db);
+      dedicated = directActions.sessionFor(shared,user);
+    } catch {}
+    if (!dedicated || closing) {
+      checking = false;
+      return {status:503,data:{error:'独立续订机器人尚未就绪，未发送提醒。'}};
+    }
+    const receipt = {requestId,status:'running',matched:0,sent:0,skipped:0,failed:0,uncertain:0,inFlight:false};
+    try {
+      store.prepare('INSERT INTO esim_reminder_runs (request_id,user_id,receipt) VALUES (?,?,?)').run(requestId,user.id,JSON.stringify(receipt));
+    } catch (error) { checking = false; throw error; }
+    activeManual = {requestId};
+    activeManual.promise = Promise.resolve().then(async () => {
+      try {
+        const received = await overview(user);
+        if (received.status !== 200 || !Array.isArray(received.data.history?.items)) throw Error('暂时无法同步已购资源。');
+        const items = received.data.history.items;
+        const byId = new Map(items.map(item=>[item.esimTranNo,item]));
+        const archived = archives.list(user.id);
+        const candidates = [...new Map(esimReminderCandidates(items,Date.now(),watches.list())
+          .filter(row=>row.kind==='expiry'&&!archived.has(row.resource)).map(row=>[row.resource,row])).values()];
+        candidates.sort((a,b)=>Date.parse(byId.get(a.resource).expiredTime)-Date.parse(byId.get(b.resource).expiredTime));
+        receipt.matched = candidates.length;
+        save(receipt);
+        let nextSendAt = 0;
+        for (let index = 0; index < candidates.length; index++) {
+          const row = candidates[index];
+          const available = directActions.sessionFor(shared,user);
+          if (closing || !available || available.botKey!==dedicated.botKey || available.actor!==dedicated.actor) {
+            receipt.skipped += candidates.length-index;
+            break;
+          }
+          const canSend = () => !closing && directActions.sessionFor(shared,user) === available &&
+            !watches.has(row.resource) && !archives.list(user.id).has(row.resource);
+          const pause = nextSendAt - Date.now();
+          if (pause > 0) await new Promise(resolve=>setTimeout(resolve,pause));
+          receipt.inFlight = true;
+          save(receipt);
+          try {
+            const sent = await deliverReminder({settings:available,dedicated:available,user,batch:[row],byId,canSend,requireDirect:true});
+            if (sent) {
+              receipt.sent++;
+              await db.batch([db.prepare('INSERT OR IGNORE INTO notification_log (id,resource_id,kind) VALUES (?,?,?)').bind(row.id,row.resource,row.kind)]).catch(()=>{});
+            } else receipt.skipped++;
+          } catch (error) {
+            if (error?.uncertain) receipt.uncertain++;
+            else receipt.failed++;
+          }
+          receipt.inFlight = false;
+          save(receipt);
+          nextSendAt = Date.now() + 1100;
+        }
+        receipt.status = 'completed';
+      } catch {
+        receipt.status = 'failed';
+        receipt.error = '无法完成当前提醒发送，请核对已收到的消息。';
+      } finally {
+        try { save(receipt); } finally { checking = false; activeManual = null; }
+      }
+    }).catch(()=>{});
+    return {status:202,data:receipt};
+  }
+
   async function checkReminders({ send = false } = {}) {
-    if (checking) return;
+    if (checking || closing) return;
     checking = true;
     try {
       const firstAdmin = identities.list().find(user => user.enabled !== false && admin(user));
@@ -362,15 +500,8 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
       async function sendBatch(batch) {
         const pause = nextSendAt - Date.now();
         if (pause > 0) await new Promise(resolve => setTimeout(resolve,pause));
-        if (batch[0].kind === 'expiry' && watches.has(batch[0].resource)) return;
-        const payload = telegramReminderPayload(settings.chatId,config.origin,batch);
-        const actionToken = dedicated && batch[0].kind === 'expiry'
-          ? await directActions.prepare(dedicated,user,batch[0],byId.get(batch[0].resource),payload) : null;
-        if (batch[0].kind === 'expiry' && watches.has(batch[0].resource)) return;
-        const response = await fetch(`https://api.telegram.org/bot${settings.botToken}/sendMessage`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(12000)});
-        const result = await response.json();
-        if (!response.ok || !result.ok) throw Error(`Telegram 发送失败 (${response.status})`);
-        if (actionToken) directActions.bind(actionToken,result.result);
+        const canSend = () => !closing && (batch[0].kind !== 'expiry' || !watches.has(batch[0].resource));
+        if (!await deliverReminder({settings,dedicated,user,batch,byId,canSend})) return;
         nextSendAt = Date.now() + spacing;
         await db.batch(batch.map(row => db.prepare('INSERT OR IGNORE INTO notification_log (id,resource_id,kind) VALUES (?,?,?)').bind(row.id,row.resource,row.kind)));
         progress.notified += batch.length;
@@ -398,10 +529,11 @@ export function makeResourceOperations({ root, config, mf, identities, readBody,
     void checkReminders({send:true});
   },pollInterval);
   return { route, close() {
+    closing = true;
     clearTimeout(initial); clearInterval(timer);
-    const closeStores=()=>{ watches.close(); archives.close(); mailLog.close(); };
+    const closeStores=()=>{ watches.close(); archives.close(); mailLog.close(); manualDb?.close(); };
     const stopping=directActions.close();
-    if (stopping) return stopping.finally(closeStores);
+    if (stopping || activeManual) return Promise.allSettled([stopping,activeManual?.promise]).then(closeStores);
     closeStores();
   } };
 }

@@ -3,8 +3,10 @@ import test from 'node:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { esimReminderCandidates, makeResourceOperations, telegramReminderPayload } from '../resource-operations/resource-operations.mjs';
 import { openEsimWatches } from '../resource-operations/esim-watches.mjs';
+import { openEsimArchives } from '../resource-operations/esim-archives.mjs';
 
 const day = 86400000;
 const mb = 1024 ** 2;
@@ -119,4 +121,103 @@ test('scheduled reminders send separate expiry messages, batch low data, and ded
   await settle(()=>log.size===5);
   assert.equal(sent.length,4);
   assert.equal(sent[3].reply_markup.inline_keyboard[1][0].url,'https://example.test/?watchEsim=line-observed');
+});
+
+test('manual current reminders require the owner and ready dedicated bot, persist counts, and never resend the same ID', async t => {
+  const root=mkdtempSync(join(tmpdir(),'esim-manual-reminders-'));
+  mkdirSync(join(root,'data'));
+  const owner={id:'owner',email:'owner@example.test',role:'employee',enabled:true};
+  const other={id:'other',email:'other@example.test',role:'employee',enabled:true};
+  const origin='https://example.test';
+  const config={origin,bindings:{RESOURCE_ADMIN_EMAILS:`${owner.email},${other.email}`,TELEGRAM_BOT_TOKEN:'100:shared',TELEGRAM_CHAT_ID:'55',
+    TELEGRAM_DIRECT_ACTIONS:'1',TELEGRAM_ESIM_BOT_TOKEN:'200:dedicated',TELEGRAM_ESIM_CHAT_ID:'55',TELEGRAM_DIRECT_ACTOR_ID:'55'}};
+  const now=Date.now();
+  const line=(esimTranNo,days=4)=>({...item,esimTranNo,packageName:esimTranNo,packageCode:'PLAN',expiredTime:new Date(now+days*day).toISOString()});
+  const items=['sent-one','no-preview','send-failed','send-uncertain','watched','archived'].map(id=>line(id));
+  items.push(line('already-expired',-1),line('beyond-window',6));
+  const watches=openEsimWatches(root),archives=openEsimArchives(root);
+  watches.set(['watched'],true); archives.set(owner.id,['archived'],true);
+  watches.close(); archives.close();
+  const logged=new Set([`expiry:sent-one:${items[0].expiredTime}`]);
+  const db={prepare(sql){
+    if (sql.startsWith('SELECT encrypted_value')) return {first:async()=>null};
+    if (sql.startsWith('SELECT id FROM notification_log')) return {bind:id=>({first:async()=>logged.has(id)?{id}:null})};
+    if (sql.startsWith('INSERT OR IGNORE INTO notification_log')) return {bind:id=>({id})};
+    throw Error(`Unexpected SQL: ${sql}`);
+  },batch:async rows=>rows.forEach(row=>logged.add(row.id))};
+  const sent=[],previews=[];
+  const mf={getD1Database:async()=>db,dispatchFetch:async()=>Response.json({history:{items},viewer:{}})};
+  const purchases={previewReminderRenewal:async(_user,fields)=>{
+    previews.push(fields.resourceId);
+    if (fields.resourceId==='no-preview') throw Error('No supported renewal');
+    return {...fields,expectedPackageCode:'PLAN',planCode:'TOPUP_PLAN',plan:'Three gigabytes',priceRaw:5000,issuedAt:Date.now()};
+  },telegramRenewalId:()=> 'LR-example',renewFromTelegram:()=>assert.fail('manual reminder must not renew or pay')};
+  t.mock.method(globalThis,'fetch',async (url,init)=>{
+    assert.ok(url.startsWith('https://api.telegram.org/bot200:dedicated/'),'shared bot used for manual request');
+    const method=url.split('/').at(-1);
+    if (method==='getMe') return Response.json({ok:true,result:{id:200,is_bot:true}});
+    if (method==='getChat') return Response.json({ok:true,result:{id:55,type:'private'}});
+    if (method==='getWebhookInfo') return Response.json({ok:true,result:{url:''}});
+    if (method==='getUpdates') return Response.json({ok:true,result:[]});
+    assert.equal(method,'sendMessage');
+    const payload=JSON.parse(init.body);
+    sent.push(payload);
+    assert.match(payload.reply_markup.inline_keyboard[0][0].callback_data,/^yorke-esim:r:[a-f0-9]{24}$/);
+    assert.equal(payload.reply_markup.inline_keyboard[0][0].url,undefined);
+    assert.match(payload.text,/最高扣费金额/);
+    if (payload.text.includes('send-failed')) return Response.json({ok:false,error_code:403},{status:403});
+    if (payload.text.includes('send-uncertain')) throw Error('Transport disconnected');
+    return Response.json({ok:true,result:{message_id:123}});
+  });
+  const options={root,config,mf,identities:{list:()=>[owner,other]},readBody:async req=>req.body,purchases};
+  let operations=makeResourceOperations(options);
+  t.after(async()=>{await operations.close();rmSync(root,{recursive:true,force:true});});
+  const requestId='e8603596-e254-4a8a-af9e-46b1aa27f590';
+  async function request({user=owner,id=requestId,method='POST',requestOrigin=origin,contentType='application/json',pathname='/api/operations/reminders/send-current'}={}) {
+    let result;
+    const req={method,headers:{origin:requestOrigin,'content-type':contentType},body:JSON.stringify({requestId:id})};
+    const res={writeHead(status){result={status};},end(body){result.body=JSON.parse(body);}};
+    assert.equal(await operations.route(req,res,new URL(pathname,origin),user),true);
+    return result;
+  }
+  assert.equal((await request({user:other})).status,403);
+  assert.equal((await request({requestOrigin:'https://foreign.test'})).status,403);
+  assert.equal((await request({contentType:'text/plain'})).status,403);
+  assert.equal((await request({id:'invalid'})).status,400);
+  assert.equal((await request()).status,503);
+  assert.equal(sent.length,0);
+  const ready=async()=> (await request({method:'GET',pathname:'/api/operations/reminders'})).body.directActions.ready;
+  const until=Date.now()+4000;
+  while (!await ready()&&Date.now()<until) await new Promise(resolve=>setTimeout(resolve,20));
+  assert.ok(await ready());
+  const started=await request();
+  assert.equal(started.status,202);
+  assert.equal(started.body.status,'running');
+  assert.equal((await request()).status,202);
+  assert.equal((await request({id:'fa2b8e82-4620-413a-ad2c-f03e9cb6e064'})).status,409);
+  let result;
+  const deadline=Date.now()+8000;
+  do {
+    result=await request();
+    if (result.status===202) await new Promise(resolve=>setTimeout(resolve,20));
+  } while (result.status===202&&Date.now()<deadline);
+  assert.deepEqual(result,{status:200,body:{requestId,status:'completed',matched:4,sent:1,skipped:1,failed:1,uncertain:1,inFlight:false}});
+  assert.deepEqual(previews,['sent-one','no-preview','send-failed','send-uncertain']);
+  assert.equal(sent.length,3);
+  const persisted=new DatabaseSync(join(root,'data','site-esim-telegram-actions.sqlite'),{readOnly:true});
+  assert.equal(persisted.prepare('SELECT resource_id FROM esim_telegram_actions WHERE message_id=?').get(123).resource_id,'sent-one');
+  persisted.close();
+  await operations.close();
+  const runs=new DatabaseSync(join(root,'data','site-esim-reminder-runs.sqlite'));
+  const interrupted='9dfa0830-cd19-415a-8161-0341d3bfd5a5';
+  runs.prepare('INSERT INTO esim_reminder_runs VALUES(?,?,?)').run(interrupted,owner.id,JSON.stringify({requestId:interrupted,status:'running',matched:2,sent:1,skipped:0,failed:0,uncertain:0,inFlight:true}));
+  runs.close();
+  operations=makeResourceOperations(options);
+  assert.deepEqual(await request(),result);
+  const recovery=await request({id:interrupted});
+  assert.equal(recovery.body.status,'interrupted');
+  assert.equal(recovery.body.uncertain,1);
+  assert.equal(recovery.body.inFlight,false);
+  assert.deepEqual(await request({id:interrupted}),recovery);
+  assert.equal(sent.length,3);
 });

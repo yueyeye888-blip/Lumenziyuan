@@ -1,5 +1,5 @@
 {
-  "version": "2026.11.27-commerce.14",
+  "version": "2026.11.27-commerce.15",
   "source": "YorkeAI self-host runtime",
   "includedReleases": [
     "mail-delivery",
@@ -29,7 +29,8 @@
     "inline-official-template-introductions",
     "yorkeai-template-previews",
     "five-day-expiry-and-watchlist-telegram-actions-v1.9.0",
-    "mail-delivery-type-time-and-telegram-direct-renewal-v2.0.0"
+    "mail-delivery-type-time-and-telegram-direct-renewal-v2.0.0",
+    "manual-dedicated-telegram-expiry-reminders-v2.0.1"
   ],
   "portabilityChanges": [
     "authorize-site-outlook.mjs",
@@ -230,8 +231,8 @@
     "drizzle/meta/_journal.json": "83707552cb2e8464125bf6da9d6391a8f86273e98adc25ff1da77afdc6436734",
     "initialize.mjs": "32dd89b9b7439f20822c2a723bc9a9dc06371464c130d2b472d210eb22473ff9",
     "outlook-mail.mjs": "bfaa0e528b3410949e1881490c867a4fb91247715d798173d2b3b9cf335a4437",
-    "package-lock.json": "fe24f4b5dd5561278c35687a126a6bba49efd47c69285b310c08879742d10e2b",
-    "package.json": "b11c9f78b0891c9bdbaa4e59214a4a55bb7c9c539902de32bcff52bdf5c7072e",
+    "package-lock.json": "07d1a76de6ffa72e876f855ab2130ba0c7501bc4a85650ec523945f0d5285c96",
+    "package.json": "ee95802b00948981c34dfef2a1ae41966b0dc3c78db82da77b8d61063cc403ff",
     "private-template-archive.mjs": "eb4817f4a57b85c0202774311f180349b7035055c16e52205bc0b7838018ead3",
     "public-auth.mjs": "24739e3ab8fe1faf2c505868b9e9fe75fd217a38d4b9b50920ac670773706863",
     "registration.mjs": "2cab28245e400ea96877291d2c498bf0121d72e4f600ad3ccec7d54833a6daf3",
@@ -253,11 +254,11 @@
     "resource-operations/esim-watches.mjs": "4d38b88e6ac2535dca57a78cb68f0d390eee6d2864f8e900125f370b0afc7359",
     "resource-operations/jszip.cjs": "acc7e41455a80765b5fd9c7ee1b8078a6d160bbbca455aeae854de65c947d59e",
     "resource-operations/portal.js": "63b22d5582ab84d4df38ad25a956a14b016fd3b3d990fe0aa51290e613834ad5",
-    "resource-operations/resource-operations.mjs": "574db377c37378476c6e8d2221222b560271c387f127a592a6ef1b1712ea4e08",
+    "resource-operations/resource-operations.mjs": "beaf6cdb0f7443c93e67eb74aa43289d1f785337dbc97795f27891b901570942",
     "resource-operations/session-store.mjs": "45c7ff900b9eee37d418e55edab9562683a57196553904f410ad9b07520bc77f",
     "runtime.mjs": "484f421f8cf5c3dcba19b4ad776f95a5bfec2fea4d57505abc783064974ea081",
     "sample-mail-attachments.mjs": "70dcc3db130e03e072bf24e9d49dd6d35b2601bfc5b22e0d7adc9ed20f6ae337",
-    "server.mjs": "9303791786b2915b1a68548321f0654bb644d838e75ed1a6ae7ae884245e52d0",
+    "server.mjs": "643195ba4a81ff9d8ab544b62581e666c32dfdb578976fc533c12af3f008e807",
     "setup.mjs": "cf977ed6d85ee23ade8278f8bc3205605b5487ef47a40da9259592918120b0fa",
     "site-order-queue.mjs": "3d0ef29ed8265cbedd55971f4020f6a0b20e3836d495b3fde9cee45285d501b5",
     "sync-template-introductions.mjs": "ca3c747018b76b2c173deb6b15d6673083ae464c439617595807e62d11af90f2",
@@ -268,7 +269,7 @@
     "test/archive-download-integration.test.mjs": "085c58d90d9b21922d1e527c86f128dca6567585bf185d91a24152c8d36384d4",
     "test/catalog-integration.test.mjs": "eef6a1841fa56f6161439297b0e1f575469355d91df9b191145d8e4303bc19c4",
     "test/deposits-integration.test.mjs": "f09694330038b21e4d64de7ec31d51ef00d33d15f18a6f73c03bdcd05d2f890f",
-    "test/esim-reminders-integration.test.mjs": "3d1ac70f7c33c79b103fbcd0f8e826b78a2c03444d0b6d3e73b5c1ae0eea5e3b",
+    "test/esim-reminders-integration.test.mjs": "65336b680fa095953039d7072f242ba68b404b81f1749591e3cfc494ee8f5dc3",
     "test/esim-telegram-actions-integration.test.mjs": "672da722595d6f4529a6fad77d57eca23e268ef75e90f518d864b45725a861b7",
     "test/fresh-install.test.mjs": "ae6dfc8cca116205aff7e32bd6db5130ec5be7ee6f9da6684d56b3f6763aa8cf",
     "test/mail-history-integration.test.mjs": "40698a2d147a0031916a972384b2c58fd090e67494f35b26928fa437b45175d3",
