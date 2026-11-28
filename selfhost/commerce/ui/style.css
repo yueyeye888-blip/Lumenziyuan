@@ -510,7 +510,7 @@ dialog {
   white-space: nowrap;
 }
 #deposits .billing-table {
-  min-width: 535px;
+  min-width: 640px;
 }
 #deposits .billing-table td:last-child {
   text-align: end;
@@ -1095,3 +1095,209 @@ dialog form {
 .supplier-funds h2 { margin: 0; font-size: 16px; }
 .supplier-funds p { margin: 5px 0 0; color: #53647e; font-size: 13px; }
 .supplier-funds strong { color: #142441; font-size: 23px; font-variant-numeric: tabular-nums; }
+
+/* Admin payment reconciliation */
+.recon-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.recon-stat {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+  padding: 19px 22px;
+}
+.recon-stat > span, .recon-stat p { color: var(--muted); font-size: .875rem; }
+.recon-stat strong {
+  color: var(--ink);
+  font-size: 2.2rem;
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.recon-stat:first-child strong { color: #865704; }
+.recon-stat p { margin: 0; }
+.recon-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  margin-bottom: 16px;
+}
+.recon-heading h2 { margin: 0; }
+.recon-heading .hint { margin-top: 5px; }
+#health {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.recon-network {
+  display: flex;
+  align-items: center;
+  align-content: start;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.recon-network .recon-field,
+.recon-network small { flex-basis: 100%; }
+.recon-network .recon-field { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.recon-search, .recon-order-lookup {
+  display: flex;
+  align-items: flex-end;
+  max-width: none;
+  gap: 8px;
+}
+.recon-search {
+  margin-bottom: 26px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--soft);
+}
+.recon-search label, .recon-order-lookup label { flex: 1 1 0; min-width: 0; }
+.recon-search button, .recon-order-lookup button { min-height: 43px; white-space: nowrap; }
+.recon-group + .recon-group { margin-top: 30px; }
+.recon-group h3 { margin-bottom: 12px; }
+#reviews, #review-history { display: grid; gap: 12px; }
+#reviews .hint, #review-history .hint { line-height: 1.55; }
+.recon-transfer {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  display: grid;
+  gap: 14px;
+}
+.recon-transfer-heading, .recon-transfer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.recon-flags { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.recon-amount, .recon-field {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.recon-amount > span, .recon-field > span, .recon-hash > span,
+.recon-note > span, .recon-candidate-count > span {
+  color: var(--muted);
+  font-size: .83rem;
+  font-weight: 550;
+}
+.recon-amount > strong {
+  font-size: 1.65rem;
+  font-weight: 680;
+  letter-spacing: -.03em;
+  font-variant-numeric: tabular-nums;
+}
+.recon-field > strong { font-size: .92rem; font-variant-numeric: tabular-nums; }
+.recon-field time { font-size: .92rem; font-variant-numeric: tabular-nums; }
+.recon-field time small { margin-left: 5px; }
+.recon-metadata, .recon-option-meta, .recon-selection-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 16px;
+}
+.recon-hash {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 14px;
+  padding: 11px 13px;
+  background: var(--soft);
+  border-radius: 9px;
+}
+.recon-hash > span { grid-column: 1/-1; }
+.recon-hash code { font-size: .8rem; }
+.recon-hash-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.recon-hash-tools a { font-size: .82rem; text-decoration: none; }
+.recon-hash-tools a:hover { text-decoration: underline; }
+.recon-hash-tools button { min-height: 31px; font-size: .8rem; padding: 5px 9px; }
+.recon-transfer-footer {
+  border-top: 1px solid #edf1f7;
+  padding-top: 12px;
+}
+.recon-transfer-footer .buttons { flex-wrap: wrap; }
+.recon-transfer-footer .hint { flex-basis: 100%; }
+.recon-candidate-count { display: flex; align-items: center; gap: 7px; }
+.recon-candidate-count strong { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+.recon-history-card .recon-transfer-heading > div { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.recon-history-amount { font-size: 1.18rem; font-variant-numeric: tabular-nums; }
+.recon-note p { margin: 4px 0 0; font-size: .88rem; white-space: pre-wrap; }
+#review-dialog { width: min(calc(100% - 24px), 790px); }
+#review-form { max-width: none; }
+.recon-transfer-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.recon-transfer-summary .recon-hash { grid-column: 1/-1; }
+.recon-candidates { min-width: 0; border: 0; margin: 0; padding: 0; }
+.recon-candidates legend { font-weight: 680; margin-bottom: 5px; }
+.recon-order-lookup { margin-top: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.recon-order-lookup label { font-size: .86rem; }
+#review-option-list { display: grid; gap: 9px; max-height: 300px; overflow: auto; padding: 4px; }
+.recon-option {
+  display: grid;
+  grid-template-columns: 20px minmax(0,1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.recon-option input { align-self: start; margin: 4px 0 0; min-height: 0; width: 18px; height: 18px; accent-color: var(--accent); }
+.recon-option:has(input:checked) { background: var(--accent-soft); border-color: #9bb0f9; }
+.recon-option:has(input:disabled) { background: var(--soft); cursor: default; opacity: .8; }
+.recon-option-content { display: grid; gap: 9px; min-width: 0; }
+.recon-option-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 7px; }
+.recon-option-header strong { overflow-wrap: anywhere; }
+.recon-option-meta .recon-field { gap: 2px; }
+#review-selection { display: grid; gap: 10px; padding: 14px; background: var(--accent-soft); border-radius: 10px; }
+.recon-selection-summary { grid-template-columns: repeat(2, minmax(0,1fr)); }
+.recon-confirm { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 9px; font-weight: 550; font-size: .91rem; }
+.recon-confirm input { width: 18px; height: 18px; min-height: 0; flex: none; margin: 3px 0 0; accent-color: var(--accent); }
+.recon-dialog-actions { justify-content: flex-end; flex-wrap: wrap; }
+.recon-payment-warning {
+  padding: 9px 12px;
+  color: #745008;
+  background: #fff3d9;
+  border-radius: 8px;
+  font-size: .875rem;
+  margin: 0;
+}
+@media (max-width: 760px) {
+  .recon-summary, #health { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+  .recon-stat:last-child { grid-column: 1/-1; }
+  .recon-metadata, .recon-option-meta { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+@media (max-width: 540px) {
+  .recon-summary, #health, .recon-transfer-summary { grid-template-columns: 1fr; }
+  .recon-stat { padding: 13px 16px; gap: 3px; }
+  .recon-stat strong { font-size: 1.75rem; }
+  .recon-transfer { padding: 13px; }
+  .recon-metadata, .recon-option-meta { grid-template-columns: 1fr; gap: 7px; }
+  .recon-search, .recon-order-lookup { flex-wrap: wrap; }
+  .recon-search label, .recon-order-lookup label { flex-basis: 100%; }
+  .recon-hash { grid-template-columns: 1fr; }
+  #review-option-list { max-height: 240px; }
+}

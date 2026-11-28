@@ -159,6 +159,8 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
         }
         if (path === '/api/commerce/admin/review' && req.method === 'POST') {
           const f = await fields();
+          if (f.action === 'credit' && (typeof f.orderId !== 'string' || !uuid.test(f.orderId)))
+            throw fault(400, '补单入账必须先选择对应的充值订单。');
           const account =
             f.action === 'credit'
               ? identities.byEmail(
@@ -184,8 +186,35 @@ export function createCommerce({ wallet, db, mf, config, identities, deposits, r
           });
           return json(res, 200, { resolution });
         }
-        if (path.endsWith('/deposits') && req.method === 'GET')
-          return json(res, 200, { health: deposits.health(), reviews: deposits.reviews() });
+        if (path === '/api/commerce/admin/deposits' && req.method === 'GET') {
+          const txHash = url.searchParams.get('txHash') || '';
+          const orderId = url.searchParams.get('orderId') || '';
+          if (orderId && !uuid.test(orderId)) throw fault(400, '请输入有效的充值订单编号。');
+          const accounts = new Map(identities.list().map(({id, email, role, enabled}) => [id, {email, role, enabled}]));
+          const emailOf = id => accounts.get(id)?.email ?? null;
+          const permitted = canManageAccounts(config,user);
+          const enrich = item => ({
+            ...item,
+            accountEmail: emailOf(item.userId),
+            creditedEmail: emailOf(item.creditedUserId),
+            actorEmail: emailOf(item.actor),
+          });
+          const reviews = deposits.reviews(false, txHash).map(item => ({
+            ...enrich(item),
+            candidates: deposits.candidates(item, orderId.toLowerCase()).map(candidate => {
+              const account = accounts.get(candidate.userId);
+              return {
+                ...candidate,
+                email: account?.email ?? null,
+                accountEmail: account?.email ?? null,
+                canCredit: Boolean(candidate.canCredit && account && account.enabled !== false &&
+                  (account.role === 'customer' || permitted)),
+              };
+            }),
+          }));
+          const history = deposits.history(txHash).map(enrich);
+          return json(res, 200, { health: deposits.health(), reviews, history });
+        }
       }
       if (path === '/api/commerce/address/price' && req.method === 'GET') {
         return json(res,200,{priceRaw:addressPriceFor(user)});

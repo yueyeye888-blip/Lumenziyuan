@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { createDeposits } from '../commerce/deposits.mjs';
 import { chains, receivingAddress } from '../commerce/usdt-chain.mjs';
+import { createWallet } from '../commerce/wallet.mjs';
+import { createCommerce } from '../commerce/commerce.mjs';
+import { randomUUID } from 'node:crypto';
 
 const address = (n) => '0x' + n.toString(16).padStart(40, '0');
 const hash = (n) => '0x' + BigInt(n).toString(16).padStart(64, '0');
@@ -311,4 +314,204 @@ test('manual review ties confirmed event to the same target and records one atom
   deposits.resolve({ ...duplicate, action: 'acknowledge', actor: 'admin', note: '已线下处理' });
   assert.equal(deposits.reviews().length, 0);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM credits').get().n, 1);
+});
+
+
+test('exchange withdrawal mismatches are safely matched to eligible orders and credited only after admin review', async (t) => {
+  // Use the real BSC precision and wallet ledger, with deterministic synthetic
+  // amounts and mocked finalized Transfer events. Never call a live chain.
+  const { db, args, rpc, clock, transfer } = fixture('BSC');
+  t.after(() => db.close());
+  const wallet = createWallet(db);
+  const deposits = createDeposits({
+    ...args,
+    credit: wallet.credit,
+    config: { networks: { BSC: { mode: 'shared', rpcUrl: 'https://example.test', addresses: [address(11)] } } },
+  });
+  await deposits.poll();
+  async function quoted(userId, requestId, expected) {
+    const order = await deposits.create({ userId, requestId, amount: 20, network: 'BSC' });
+    // Quote allocation is random in production; freeze the test scenario only.
+    const fractional = expected.split('.')[1];
+    db.prepare('UPDATE deposit_orders SET units=?,fraction=? WHERE id=?')
+      .run(BigInt('20' + fractional.padEnd(18, '0')).toString(), fractional, order.id);
+    return deposits.get(userId, order.id);
+  }
+  function cloneOrder(source, overrides) {
+    const row = { ...db.prepare('SELECT * FROM deposit_orders WHERE id=?').get(source.id),
+      id: randomUUID(), request_id: randomUUID(), ...overrides };
+    const columns = Object.keys(row);
+    db.prepare('INSERT INTO deposit_orders(' + columns.join(',') + ') VALUES(' + columns.map(() => '?').join(',') + ')')
+      .run(...columns.map(key => row[key]));
+    return row.id;
+  }
+  const first = await quoted('buyer', 'exchange-case-first', '20.09');
+  const wrongNetwork = cloneOrder(first, { network: 'ETH' });
+  const wrongRecipient = cloneOrder(first, { address: address(12), recipient: address(12) });
+  const firstTx = hash((0xaan << 248n) + 1n);
+  const secondTx = hash((0xbbn << 248n) + 2n);
+  const duplicateTx = hash((0xccn << 248n) + 3n);
+  clock.now += 61000;
+  transfer(first, 101, { amount: '20.08', tx: BigInt(firstTx), index: 78 });
+  clock.now += 11 * 60000;
+  rpc.tip = 102;
+  const second = await quoted('buyer', 'exchange-case-second', '20.07');
+  clock.now += 28000;
+  transfer(second, 103, { amount: '19.99', tx: BigInt(secondTx), index: 66 });
+  rpc.final = 103;
+  // Expiry is not evidence that the money was lost. Confirmed transfers
+  // with mismatched amounts enter review and do not alter the ledger.
+  clock.now += 32 * 60000;
+  await deposits.poll();
+  rpc.tip = 104;
+  const future = await quoted('another', 'future-after-transfers', '20.03');
+  assert.equal(deposits.get('buyer', first.id).status, 'expired');
+  assert.equal(deposits.get('buyer', second.id).status, 'expired');
+  assert.equal(wallet.balance('buyer'), 0);
+  const reviews = deposits.reviews();
+  assert.equal(reviews.length, 2);
+  const firstEvent = reviews.find(item => item.txHash === firstTx);
+  const secondEvent = reviews.find(item => item.txHash === secondTx);
+  assert.deepEqual([firstEvent.paidAmount, secondEvent.paidAmount], ['20.08', '19.99']);
+  assert.ok(reviews.every(item => item.reason === 'unmatched' && item.orderId === null));
+  const a = deposits.candidates(firstEvent);
+  const b = deposits.candidates(secondEvent);
+  assert.deepEqual(a.map(item => item.id), [first.id]);
+  assert.equal(a[0].expectedAmount, '20.09');
+  assert.equal(a[0].withinWindow, true);
+  assert.equal(a[0].status, 'expired');
+  assert.equal(Number(a[0].recommendedCredit), 20);
+  assert.equal(b[0].id, second.id);
+  assert.equal(b.find(item => item.id === second.id)?.expectedAmount, '20.07');
+  assert.equal(Number(b.find(item => item.id === second.id)?.recommendedCredit), 19.99);
+  for (const orderId of [wrongNetwork, wrongRecipient, future.id]) {
+    assert.ok(!a.some(item => item.id === orderId));
+    assert.ok(!b.some(item => item.id === orderId));
+  }
+  assert.deepEqual(deposits.reviews(false, firstTx.toUpperCase()).map(item => item.txHash), [firstTx]);
+  assert.deepEqual(deposits.reviews(false, 'bb').map(item => item.txHash), [secondTx]);
+  assert.deepEqual(deposits.reviews(false, hash(77)), []);
+  assert.throws(() => deposits.reviews(false, 'x%'), { status: 400 });
+  assert.deepEqual(deposits.candidates(secondEvent, first.id).map(item => item.id), [first.id]);
+  assert.deepEqual(deposits.candidates(secondEvent, wrongNetwork), []);
+  assert.deepEqual(deposits.candidates(firstEvent, second.id), []);
+  // Two distinct users can have contemporaneous quotes on a shared address.
+  // Similar amounts are only suggestions; no ownership is inferred.
+  const partner = cloneOrder(first, {
+    user_id: 'another', units: BigInt('20' + '04'.padEnd(18, '0')).toString(), fraction: '04'
+  });
+  assert.ok(deposits.candidates(firstEvent).some(item => item.id === partner));
+  const owner = { id: 'admin', role: 'employee', email: 'admin@example.invalid' };
+  const operator = { id: 'operator', role: 'employee', email: 'operator@example.invalid' };
+  const buyer = { id: 'buyer', role: 'customer', email: 'buyer@example.invalid' };
+  const another = { id: 'another', role: 'employee', email: 'another@example.invalid' };
+  const accounts = [owner, operator, buyer, another];
+  const config = { origin: 'https://example.test', bindings: { RESOURCE_ADMIN_EMAILS: owner.email + ',' + operator.email } };
+  const commerce = createCommerce({ db, config, wallet, deposits, mf: {}, purchases: {},
+    identities: {
+      list: () => accounts,
+      byEmail: email => accounts.find(account => account.email === email),
+    },
+    readBody: async req => Buffer.from(JSON.stringify(req.fields)),
+  });
+  async function call(path, user = owner, fields) {
+    let status, body;
+    const req = { method: fields ? 'POST' : 'GET', fields,
+      headers: { origin: config.origin, 'content-type': 'application/json' } };
+    const res = { writeHead(n) { status = n; }, end(value) { body = JSON.parse(value); } };
+    assert.equal(await commerce.route(req, res, new URL(path, config.origin), user), true);
+    return { status, body };
+  }
+  async function submit(event, orderId, principal, fields = {}, user = owner) {
+    return call('/api/commerce/admin/review', user, {
+      network: event.network, txHash: event.txHash, logIndex: event.logIndex,
+      action: 'credit', email: buyer.email, orderId, principal,
+      note: 'Exchange payout verified in test', ...fields,
+    });
+  }
+  const publicDenied = await call('/api/commerce/admin/deposits', buyer);
+  assert.equal(publicDenied.status, 403);
+  assert.equal((await submit(firstEvent, first.id, '20', {}, buyer)).status, 403);
+  assert.equal((await submit(firstEvent, first.id, '20', { orderId: undefined })).status, 400);
+  const overview = await call('/api/commerce/admin/deposits?txHash=aa');
+  assert.equal(overview.status, 200);
+  assert.equal(overview.body.history.length, 0);
+  assert.equal(overview.body.reviews.length, 1);
+  assert.equal(overview.body.reviews[0].txHash, firstTx);
+  assert.equal(overview.body.reviews[0].candidates[0].email, buyer.email);
+  assert.equal(overview.body.reviews[0].candidates[0].canCredit, true);
+  assert.equal((await call('/api/commerce/admin/deposits?orderId=invalid')).status, 400);
+  assert.equal((await call('/api/commerce/admin/deposits?txHash=z')).status, 400);
+  const exactQuery = '/api/commerce/admin/deposits?txHash=aa&orderId=' + partner;
+  assert.equal((await call(exactQuery)).body.reviews[0].candidates[0].canCredit, true);
+  const restrictedCandidate = (await call(exactQuery, operator)).body.reviews[0].candidates[0];
+  assert.equal(restrictedCandidate.email, another.email);
+  assert.equal(restrictedCandidate.canCredit, false);
+  // Verified Transfer identity, candidate account/order and actual amount
+  // are re-checked server-side rather than being trusted from the browser.
+  assert.equal((await submit(firstEvent, first.id, '20.08')).status, 409);
+  assert.equal((await submit(firstEvent, first.id, '20', { email: another.email })).status, 409);
+  assert.equal((await submit(firstEvent, first.id, '20', { email: another.email }, operator)).status, 403);
+  assert.equal((await submit(firstEvent, wrongNetwork, '20')).status, 409);
+  assert.equal((await submit(firstEvent, wrongRecipient, '20')).status, 409);
+  assert.equal((await submit(firstEvent, second.id, '20')).status, 409);
+  assert.equal((await submit(secondEvent, second.id, '20')).status, 400);
+  assert.equal((await submit(secondEvent, future.id, '19.99', { email: another.email })).status, 409);
+  // If a separate matching transfer is still awaiting finality, block
+  // manual credit until its outcome is known.
+  db.prepare('INSERT INTO deposit_seen VALUES(?,?,?,?)')
+    .run(second.id, hash(1234), '20070000000000000000', 106);
+  assert.equal(deposits.candidates(secondEvent, second.id)[0].canCredit, false);
+  assert.equal((await submit(secondEvent, second.id, '19.99')).status, 409);
+  db.prepare('DELETE FROM deposit_seen WHERE order_id=?').run(second.id);
+  // A failed wallet write rolls back both the order update and resolution.
+  const brokenLedger = createDeposits({ ...args, credit: () => { throw Error('ledger unavailable'); } });
+  assert.throws(() => brokenLedger.resolve({
+    ...firstEvent, action: 'credit', orderId: first.id, principal: '20',
+    userId: buyer.id, actor: owner.id, note: 'synthetic ledger failure'
+  }), /ledger unavailable/);
+  assert.equal(deposits.get('buyer', first.id).status, 'expired');
+  assert.equal(deposits.reviews().length, 2);
+  assert.equal(wallet.balance('buyer'), 0);
+  const firstCredit = await submit(firstEvent, first.id, '20');
+  assert.equal(firstCredit.status, 200);
+  assert.equal(firstCredit.body.resolution.alreadyResolved, false);
+  assert.equal((await submit(firstEvent, first.id, '20')).body.resolution.alreadyResolved, true);
+  assert.equal((await submit(firstEvent, first.id, '19.99')).status, 409);
+  assert.equal((await submit(secondEvent, first.id, '19.99')).status, 409);
+  assert.ok(!deposits.candidates(secondEvent).some(item => item.id === first.id));
+  const secondCredit = await submit(secondEvent, second.id, '19.99');
+  assert.equal(secondCredit.status, 200);
+  assert.equal(wallet.balance('buyer'), 399900);
+  assert.equal(wallet.balance('another'), 0);
+  assert.equal(deposits.get('buyer', first.id).creditedAmount, 20);
+  assert.equal(deposits.get('buyer', first.id).paidAmount, '20.08');
+  assert.equal(deposits.get('buyer', second.id).creditedAmount, 19.99);
+  assert.equal(deposits.get('buyer', second.id).paidAmount, '19.99');
+  assert.equal(deposits.reviews().length, 0);
+  const history = deposits.history();
+  assert.equal(history.length, 2);
+  assert.ok(history.every(item => item.action === 'credit' && item.actor === 'admin'));
+  assert.deepEqual(deposits.history('aa').map(item => item.txHash), [firstTx]);
+  const historyResponse = await call('/api/commerce/admin/deposits?txHash=bb');
+  assert.equal(historyResponse.status, 200);
+  assert.equal(historyResponse.body.reviews.length, 0);
+  assert.equal(historyResponse.body.history[0].creditedEmail, buyer.email);
+  assert.equal(historyResponse.body.history[0].actorEmail, owner.email);
+  // Repeat scans, including a new event paying an already credited quote,
+  // must not add any extra balance or change the resolved history.
+  db.prepare("UPDATE deposit_cursors SET height=100 WHERE network='BSC'").run();
+  await deposits.poll();
+  transfer(first, 105, { tx: BigInt(duplicateTx) });
+  rpc.final = 105;
+  await deposits.poll();
+  const extra = deposits.reviews().find(item => item.txHash === duplicateTx);
+  assert.equal(extra.reason, 'extra');
+  assert.deepEqual(deposits.candidates(extra), []);
+  assert.equal((await submit(extra, first.id, '20')).status, 409);
+  const acknowledged = await submit(extra, first.id, null, { action: 'acknowledge', email: undefined });
+  assert.equal(acknowledged.status, 200);
+  assert.equal(deposits.history('cc')[0].action, 'acknowledge');
+  assert.equal(wallet.balance('buyer'), 399900);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM wallet_entries').get().n, 2);
 });

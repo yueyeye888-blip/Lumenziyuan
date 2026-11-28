@@ -20,12 +20,12 @@
           >
           <a href="/__host/refund-review" id="refund-admin-link" hidden>退款审核</a>
           <a href="/__host/accounts" id="staff-admin-link" hidden>合伙人与额度</a>
+          <a id="review-link" href="/__host/payment-review" hidden>充值补单</a>
         </nav>
         <details class="profile-menu">
           <summary>账户</summary>
           <div>
             <p id="account"></p>
-            <a id="review-link" href="/__host/payment-review" hidden>收款核对</a>
             <a href="/signout-with-chatgpt">退出登录</a>
           </div>
         </details>
@@ -103,14 +103,79 @@
         </dialog>
       </div>
       <div id="payment-review" hidden>
-        <section>
-          <h2>收款网络</h2>
+        <div class="recon-summary" aria-label="本次查询概览">
+          <section class="recon-stat">
+            <span>待核对转账</span>
+            <strong id="review-count">—</strong>
+            <p>已确认到账，尚未匹配充值订单</p>
+          </section>
+          <section class="recon-stat">
+            <span>已处理记录</span>
+            <strong id="review-history-count">—</strong>
+            <p>已完成补单或记录核对结果</p>
+          </section>
+          <section class="recon-stat">
+            <span>已启用收款网络</span>
+            <strong id="review-network-count">—</strong>
+            <p>仅识别指定 USDT 合约的转账</p>
+          </section>
+        </div>
+        <section class="recon-health">
+          <div class="recon-heading">
+            <h2>收款网络</h2>
+            <button type="button" id="review-refresh" class="secondary">刷新</button>
+          </div>
           <div id="health"></div>
         </section>
-        <section>
-          <h2>待核对转账</h2>
-          <div id="reviews"></div>
+        <section class="recon-workspace">
+          <div class="recon-heading">
+            <div><h2>充值异常核对</h2><p class="hint">按交易哈希查询链上监控已记录的异常款项。候选订单仅供核对，选择后方可入账。</p></div>
+          </div>
+          <form class="recon-search" id="review-search">
+            <label for="review-hash">交易哈希（TXID）<input type="search" id="review-hash" name="txHash" maxlength="66" placeholder="输入交易哈希或前缀" autocomplete="off" spellcheck="false" /></label>
+            <button type="submit">查询</button>
+            <button type="button" class="secondary" id="review-reset">重置</button>
+          </form>
+          <div class="recon-group">
+            <h3>待核对转账</h3>
+            <div id="reviews" aria-busy="true"><p class="bill-loading">正在载入核对记录…</p></div>
+          </div>
+          <div class="recon-group">
+            <h3>已处理记录</h3>
+            <div id="review-history" aria-busy="true"><p class="bill-loading">正在载入核对记录…</p></div>
+          </div>
         </section>
+        <dialog id="review-dialog" aria-labelledby="review-dialog-title">
+          <div class="dialog-head">
+            <h2 id="review-dialog-title">确认充值补单</h2>
+            <button type="button" data-close="review-dialog" aria-label="关闭">×</button>
+          </div>
+          <form id="review-form">
+            <div id="review-transfer" class="recon-transfer-summary"></div>
+            <fieldset id="review-candidates" class="recon-candidates">
+              <legend>选择对应充值订单</legend>
+              <p class="hint">请核实充值人和订单。金额或时间接近不代表转账属于该账号。</p>
+              <div class="recon-order-lookup">
+                <label for="review-order-id">按完整订单编号查找<input id="review-order-id" type="search" maxlength="36" placeholder="输入充值订单编号" autocomplete="off" spellcheck="false" /></label>
+                <button type="button" id="review-find-order" class="secondary">查询</button>
+                <button type="button" id="review-restore-orders" class="secondary">恢复候选列表</button>
+              </div>
+              <div id="review-option-list"></div>
+            </fieldset>
+            <div id="review-selection" hidden>
+              <div class="recon-selection-summary" id="review-selection-summary"></div>
+              <label>入账金额（U）<input name="principal" type="number" inputmode="decimal" min="0.01" step="0.01" required disabled /></label>
+              <p class="hint">入账金额不得超过实际到账金额，也不得超过所选订单本金。</p>
+            </div>
+            <label>核对备注<textarea name="note" maxlength="180" rows="3" required></textarea></label>
+            <label class="recon-confirm"><input type="checkbox" name="confirmed" required /><span id="review-confirm-label">我已核实交易归属，确认向所选订单账号入账。</span></label>
+            <p class="modal-feedback" role="status" hidden></p>
+            <div class="buttons recon-dialog-actions">
+              <button type="button" data-close="review-dialog" class="secondary">取消</button>
+              <button id="review-submit" type="submit" disabled>确认补单</button>
+            </div>
+          </form>
+        </dialog>
       </div>
       <div id="shop" hidden>
         <section class="shop-wallet" aria-label="钱包 / 充值">

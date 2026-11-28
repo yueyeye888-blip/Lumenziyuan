@@ -275,11 +275,12 @@ async function loadDeposits() {
   $('show-deposits').hidden = wallet.role === 'employee' && !orders.length;
   ledgerTable(
     $('deposits'),
-    ['创建时间', '充值网络', '入账金额', '状态', { title: '', accessible: '操作' }],
+    ['创建时间', '充值网络', '充值本金', '入账金额', '状态', { title: '', accessible: '操作' }],
     orders.map((o) => [
       ledgerDate(o.createdAt),
       networkName(o.network),
-      money((o.creditedAmount ?? o.amount) * 10000),
+      money(o.amount * 10000),
+      o.status === 'credited' && o.creditedAmount != null ? money(o.creditedAmount * 10000) : '—',
       elem('span', statusText[o.status] || o.status, 'state state-' + o.status),
       button('详情', () => openInvoice(o.id, true)),
     ]),
@@ -343,6 +344,11 @@ function displayInvoice(o) {
         '请在所选网络转入完整应付金额，手续费另付。小数尾数用于识别订单，最多 0.09 USDT，尾数不计入余额。',
         'hint',
       ),
+      elem(
+        'p',
+        '交易所提币：请确保扣除手续费后的实际到账金额等于订单应付金额。',
+        'recon-payment-warning',
+      ),
     );
     countdown();
   } else
@@ -378,46 +384,297 @@ form('deposit-form', async ({ network, customAmount }) => {
   selectHistory('deposits');
   await loadDeposits();
 });
-async function admin() {
-  const r = await api('/api/commerce/admin/deposits');
-  $('health').textContent = r.health
-    .map((x) => x.label + ' · ' + (x.error || (x.enabled ? '已配置' : '未启用')))
-    .join('　');
-  const n = $('reviews');
-  n.replaceChildren();
-  for (const item of r.reviews) {
-    row(
-      n,
-      item.network + ' · ' + item.paidAmount + ' USDT',
-      item.txHash + ' · ' + item.reason,
-      button('核对', async () => {
-        const data = await ask('处理已确认的异常转账', [
-          elem('p', item.network + ' · ' + item.paidAmount + ' USDT'),
-          inputField('处理方式', 'action', {
-            options: [
-              ['acknowledge', '记录处理结果'],
-              ['credit', '人工匹配入账'],
-            ],
-          }),
-          inputField('入账账号邮箱', 'email', { type: 'email' }),
-          inputField('入账金额（U）', 'principal', { type: 'number', min: '0.01', step: '0.01' }),
-          inputField('关联充值单编号（如有）', 'orderId', {}),
-          inputField('核对备注', 'note', { required: true, maxLength: 180 }),
-        ]);
-        if (!data) return;
-        await api('/api/commerce/admin/review', {
-          ...data,
-          network: item.network,
-          txHash: item.txHash,
-          logIndex: item.logIndex,
-        });
-        await admin();
-        message('处理结果已记录。');
-      }),
-    );
-  }
-  empty(n, '暂无待核对转账');
+const reconciliationReasons = {
+  unmatched: '未匹配订单',
+  amount_mismatch: '金额不匹配',
+  outside_window: '超出付款窗口',
+  extra: '订单已入账',
+};
+const reviewForm = $('review-form');
+let reviewItem = null, reviewAction = 'credit', reviewPosting = false;
+let reviewOriginalCandidates = [], reviewLookupTicket = 0;
+let reviewLoadTicket = 0;
+function reconField(label, value, className) {
+  const field = elem('div', undefined, 'recon-field');
+  const content = value instanceof Node ? value : elem('strong', String(value));
+  if (className) content.classList.add(className);
+  field.append(elem('span', label), content);
+  return field;
 }
+function reconHash(item) {
+  const field = elem('div', undefined, 'recon-hash');
+  const hash = elem('code', item.txHash);
+  const tools = elem('div', undefined, 'recon-hash-tools');
+  const link = elem('a', '查看链上交易');
+  const base = {
+    BSC: 'https://bscscan.com/tx/',
+    ETH: 'https://etherscan.io/tx/',
+    TRON: 'https://tronscan.org/#/transaction/',
+  }[item.network];
+  if (base && /^0x[\da-f]{64}$/i.test(item.txHash)) {
+    link.href = base + (item.network === 'TRON' ? item.txHash.slice(2) : item.txHash);
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    tools.append(link);
+  }
+  tools.append(button('复制哈希', async () => {
+    await navigator.clipboard.writeText(item.txHash);
+    message('交易哈希已复制。');
+  }));
+  field.append(elem('span', '交易哈希'), hash, tools);
+  return field;
+}
+function reconTransfer(item) {
+  const card = elem('article', undefined, 'recon-transfer');
+  const top = elem('div', undefined, 'recon-transfer-heading');
+  const amount = elem('div', undefined, 'recon-amount');
+  amount.append(elem('span', '实际到账'), elem('strong', item.paidAmount + ' USDT'));
+  const flags = elem('div', undefined, 'recon-flags');
+  flags.append(elem('span', item.network, 'state'), elem('span', '已确认到账', 'state state-credited'),
+    elem('span', reconciliationReasons[item.reason] || item.reason, 'state state-review'));
+  top.append(amount, flags);
+  const details = elem('div', undefined, 'recon-metadata');
+  details.append(reconField('到账时间', ledgerDate(item.blockTime * 1000)));
+  if (item.accountEmail || item.orderId) {
+    details.append(reconField('关联账号', item.accountEmail || '—'));
+    if (item.orderId) details.append(reconField('关联充值订单', elem('code', item.orderId)));
+  } else {
+    details.append(reconField('关联充值订单', '未匹配订单'));
+  }
+  const bottom = elem('div', undefined, 'recon-transfer-footer');
+  const eligible = item.candidates?.filter((c) => c.canCredit && c.email && c.recommendedCredit > 0) || [];
+  const count = elem('div', undefined, 'recon-candidate-count');
+  count.append(elem('span', '可核对候选订单'), elem('strong', String(eligible.length)));
+  const actions = elem('div', undefined, 'buttons');
+  const credit = button('匹配订单补单', () => openReview(item, 'credit'));
+  credit.className = '';
+  actions.append(button('仅记录核对结果', () => openReview(item, 'acknowledge')), credit);
+  bottom.append(count, actions);
+  if (!eligible.length) bottom.append(elem('p', '暂无可入账的候选订单。可使用完整订单编号查找。', 'hint'));
+  card.append(top, details, reconHash(item), bottom);
+  return card;
+}
+function reconHistory(item) {
+  const card = elem('article', undefined, 'recon-transfer recon-history-card');
+  const top = elem('div', undefined, 'recon-transfer-heading');
+  const summary = elem('div');
+  const label = item.action === 'credit' ? '已补单' : '已记录核对结果';
+  summary.append(elem('span', label, 'state state-credited'),
+    elem('strong', item.action === 'credit' ? money(item.creditedPrincipal * 10000) : '未增加余额', 'recon-history-amount'));
+  const details = elem('div', undefined, 'recon-metadata');
+  details.append(reconField('到账时间', ledgerDate(item.blockTime * 1000)),
+    reconField('实际到账', item.paidAmount + ' USDT'),
+    reconField('处理时间', ledgerDate(item.resolvedMs)),
+    reconField('处理人', item.actorEmail || item.actor || '—'));
+  if (item.action === 'credit') {
+    details.append(reconField('入账账号', item.creditedEmail || item.accountEmail || '—'));
+    if (item.orderId) details.append(reconField('关联充值订单', elem('code', item.orderId)));
+  }
+  const note = elem('div', undefined, 'recon-note');
+  const noteText = elem('p', item.note || '—');
+  noteText.setAttribute('data-lumen-no-translate', '');
+  note.append(elem('span', '核对备注'), noteText);
+  top.append(summary, elem('span', item.network, 'state'));
+  card.append(top, details, reconHash(item), note);
+  return card;
+}
+function searchableHash() {
+  const raw = $('review-hash').value.trim();
+  if (!raw) return '';
+  if (!/^(?:0x)?[0-9a-f]{1,64}$/i.test(raw)) throw Error('请输入有效的交易哈希或前缀。');
+  return raw;
+}
+async function admin() {
+  const txHash = searchableHash();
+  const ticket = ++reviewLoadTicket;
+  const path = '/api/commerce/admin/deposits' + (txHash ? '?' + new URLSearchParams({ txHash }) : '');
+  const r = await api(path);
+  if (ticket !== reviewLoadTicket) return;
+  const reviews = r.reviews || [];
+  const history = r.history || [];
+  $('review-count').textContent = String(reviews.length);
+  $('review-history-count').textContent = String(history.length);
+  $('review-network-count').textContent = String(r.health.filter((x) => x.enabled).length);
+  const health = $('health');
+  health.replaceChildren();
+  for (const x of r.health) {
+    const node = elem('div', undefined, 'recon-network');
+    const status = x.error ? '监控异常' : x.enabled ? '已配置' : '未启用';
+    node.append(elem('strong', x.label), elem('span', status, 'state state-' + (x.error ? 'review' : x.enabled ? 'credited' : 'expired')));
+    if (x.lastFinalizedBlock != null) node.append(reconField('已扫描区块', String(x.lastFinalizedBlock)));
+    if (x.error) node.append(elem('small', x.error));
+    health.append(node);
+  }
+  $('reviews').replaceChildren(...reviews.map(reconTransfer));
+  $('review-history').replaceChildren(...history.map(reconHistory));
+  empty($('reviews'), txHash ? '没有符合此交易哈希的待核对转账。' : '暂无待核对转账');
+  empty($('review-history'), txHash ? '没有符合此交易哈希的已处理记录。' : '暂无已处理记录');
+  $('reviews').removeAttribute('aria-busy');
+  $('review-history').removeAttribute('aria-busy');
+}
+function selectedReviewOrder() {
+  const id = reviewForm.querySelector('input[name=orderId]:checked')?.value;
+  return reviewItem?.candidates?.find((candidate) =>
+    candidate.id === id && candidate.canCredit && candidate.email && candidate.recommendedCredit > 0);
+}
+function updateReviewSelection(reset = false) {
+  const order = reviewAction === 'credit' ? selectedReviewOrder() : null;
+  const principal = reviewForm.elements.principal;
+  const selection = $('review-selection');
+  if (reset) {
+    reviewForm.elements.confirmed.checked = false;
+    if (order) {
+      principal.max = Number(order.recommendedCredit).toFixed(2);
+      principal.value = principal.max;
+      $('review-selection-summary').replaceChildren(
+        reconField('入账账号', order.email),
+        reconField('应付金额', order.expectedAmount + ' USDT'),
+        reconField('实际到账', reviewItem.paidAmount + ' USDT'),
+        reconField('最高可入账', principal.max + ' U'),
+      );
+    } else {
+      principal.value = '';
+      principal.removeAttribute('max');
+    }
+  }
+  principal.disabled = reviewPosting || !order;
+  selection.hidden = !order;
+  $('review-submit').disabled = reviewPosting || (reviewAction === 'credit' && !order)
+    || !reviewForm.elements.note.value.trim() || !reviewForm.elements.confirmed.checked
+    || (reviewAction === 'credit' && !principal.validity.valid);
+}
+function openReview(item, action) {
+  if (reviewPosting || $('review-dialog').open) return;
+  reviewLookupTicket++;
+  reviewItem = { ...item };
+  reviewOriginalCandidates = item.candidates || [];
+  reviewAction = action;
+  reviewForm.reset();
+  $('review-order-id').value = '';
+  const credit = action === 'credit';
+  $('review-dialog-title').textContent = credit ? '确认充值补单' : '记录核对结果';
+  $('review-submit').textContent = credit ? '确认补单' : '确认记录';
+  $('review-confirm-label').textContent = credit
+    ? '我已核实交易归属，确认向所选订单账号入账。'
+    : '我确认只记录处理结果，不增加余额，并将此款项从待处理列表移除。';
+  $('review-transfer').replaceChildren(
+    reconField('实际到账', item.paidAmount + ' USDT'),
+    reconField('充值网络', item.network),
+    reconField('到账时间', ledgerDate(item.blockTime * 1000)),
+    reconHash(item),
+  );
+  $('review-candidates').hidden = !credit;
+  renderReviewOptions(credit ? reviewOriginalCandidates : []);
+  $('review-dialog').querySelector('.modal-feedback').hidden = true;
+  $('review-dialog').querySelector('.modal-feedback').textContent = '';
+  updateReviewSelection(true);
+  showModal($('review-dialog'));
+}
+function renderReviewOptions(candidates) {
+  reviewItem.candidates = candidates;
+  const options = $('review-option-list');
+  options.replaceChildren();
+  if (reviewAction === 'credit') {
+    for (const c of candidates) {
+      const row = elem('label', undefined, 'recon-option');
+      const control = document.createElement('input');
+      control.type = 'radio';
+      control.name = 'orderId';
+      control.value = c.id;
+      control.required = true;
+      control.disabled = !c.canCredit || !c.email || !(c.recommendedCredit > 0);
+      control.onchange = () => updateReviewSelection(true);
+      const content = elem('div', undefined, 'recon-option-content');
+      const header = elem('div', undefined, 'recon-option-header');
+      header.append(elem('strong', c.email || c.accountEmail || '账号不可用'),
+        elem('span', statusText[c.status] || c.status, 'state state-' + c.status));
+      const meta = elem('div', undefined, 'recon-option-meta');
+      meta.append(reconField('充值本金', c.amount + ' U'),
+        reconField('应付金额', c.expectedAmount + ' USDT'),
+        reconField('最高可入账', Number(c.recommendedCredit).toFixed(2) + ' U'),
+        reconField('订单创建时间', ledgerDate(c.createdAt)),
+        reconField('订单有效期至', ledgerDate(c.expiresAt)),
+        reconField('到账是否在有效期内', c.withinWindow ? '是' : '否'));
+      content.append(header, meta, reconField('充值订单编号', elem('code', c.id)));
+      if (control.disabled) content.append(elem('p', '此订单不可补单。', 'hint'));
+      row.append(control, content);
+      options.append(row);
+    }
+    if (!candidates.length) options.append(elem('p', '暂无可用订单，请核对完整订单编号。', 'hint'));
+  }
+  updateReviewSelection(true);
+}
+$('review-find-order').onclick = () => run($('review-find-order'), async () => {
+  if (!reviewItem || reviewAction !== 'credit' || reviewPosting) return;
+  const orderId = $('review-order-id').value.trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId)) throw Error('请输入完整的充值订单编号。');
+  const ticket = ++reviewLookupTicket;
+  const { txHash, logIndex, network } = reviewItem;
+  const data = await api('/api/commerce/admin/deposits?' + new URLSearchParams({ txHash, orderId }));
+  if (ticket !== reviewLookupTicket || reviewPosting || !$('review-dialog').open) return;
+  const item = data.reviews.find((record) => record.network === network && record.txHash === txHash && record.logIndex === logIndex);
+  if (!item) throw Error('此转账已不在待核对列表中，请关闭并刷新。');
+  renderReviewOptions(item.candidates || []);
+});
+$('review-restore-orders').onclick = () => {
+  if (!reviewItem || reviewPosting) return;
+  reviewLookupTicket++;
+  $('review-order-id').value = '';
+  renderReviewOptions(reviewOriginalCandidates);
+};
+$('review-order-id').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    $('review-find-order').click();
+  }
+});
+reviewForm.addEventListener('input', (event) => {
+  if (event.target.name !== 'confirmed' && event.target.name !== 'orderId') reviewForm.elements.confirmed.checked = false;
+  updateReviewSelection(false);
+});
+$('review-dialog').addEventListener('cancel', (event) => {
+  if (reviewPosting) event.preventDefault();
+});
+reviewForm.onsubmit = async (event) => {
+  event.preventDefault();
+  if (reviewPosting || !reviewItem || !reviewForm.reportValidity()) return;
+  const item = reviewItem;
+  const action = reviewAction;
+  const selected = selectedReviewOrder();
+  const data = new FormData(reviewForm);
+  const note = String(data.get('note') || '').trim();
+  if (!note || !data.get('confirmed') || (action === 'credit' && !selected)) return;
+  const payload = {
+    action, note, network: item.network, txHash: item.txHash, logIndex: item.logIndex,
+    ...(action === 'credit' ? { email: selected.email, orderId: selected.id, principal: String(data.get('principal')) } : {}),
+  };
+  reviewPosting = true;
+  const controls = [...reviewForm.querySelectorAll('input, button, textarea'), ...$('review-dialog').querySelectorAll('.dialog-head button')];
+  const disabled = controls.map((control) => control.disabled);
+  controls.forEach((control) => { control.disabled = true; });
+  try {
+    await api('/api/commerce/admin/review', payload);
+    $('review-dialog').close();
+    try {
+      await admin();
+      message(action === 'credit' ? '补单成功，余额及充值订单已更新。' : '处理结果已记录。');
+    } catch {
+      message('处理结果已记录，但列表刷新失败。请点击刷新核对，不要重复提交。');
+    }
+  } catch (error) {
+    message(error.message, true);
+  } finally {
+    reviewPosting = false;
+    controls.forEach((control, index) => { control.disabled = disabled[index]; });
+    updateReviewSelection();
+  }
+};
+form('review-search', admin);
+$('review-refresh').onclick = () => run($('review-refresh'), admin);
+$('review-reset').onclick = () => run($('review-reset'), async () => {
+  $('review-hash').value = '';
+  await admin();
+});
 let catalogTicket = 0;
 async function catalog() {
   const ticket = ++catalogTicket,
@@ -646,14 +903,14 @@ async function digest(t) {
 }
 (async () => {
   try {
-    const title = { shop: '资源市场', wallet: '我的钱包', 'payment-review': '收款核对' }[
+    const title = { shop: '资源市场', wallet: '我的钱包', 'payment-review': '充值补单中心' }[
       view
     ];
     $('title').textContent = title;
     $('page-intro').textContent = {
       shop: '浏览资源、下单和管理购买记录。',
       wallet: '查看可用余额和账户流水。',
-      'payment-review': '查看收款网络和需要人工核对的转账。',
+      'payment-review': '核对已确认但尚未入账的转账，关联充值订单并记录处理结果。',
     }[view];
     document.title = title + ' · Yorke AI';
     document.body.dataset.view = view;

@@ -402,6 +402,75 @@ eSIM 套餐|eSIM Plans
 处理结果已记录。|Resolution recorded.
 核对|Review
 记录处理结果|Record Resolution
+充值补单|Reconcile Top-ups
+充值补单中心|Top-up Reconciliation
+本次查询概览|Current Search Summary
+已确认到账，尚未匹配充值订单|Confirmed transfers awaiting an order match
+已处理记录|Resolved Records
+已完成补单或记录核对结果|Credited top-ups and recorded resolutions
+已启用收款网络|Enabled Payment Networks
+仅识别指定 USDT 合约的转账|Only transfers of the configured USDT contracts are recognized
+充值异常核对|Top-up Exceptions
+按交易哈希查询链上监控已记录的异常款项。候选订单仅供核对，选择后方可入账。|Search confirmed exceptions by transaction hash. Review and select an order before crediting an account.
+交易哈希（TXID）|Transaction Hash (TXID)
+输入交易哈希或前缀|Enter a transaction hash or prefix
+查询|Search
+正在载入核对记录…|Loading reconciliation records…
+确认充值补单|Confirm Top-up Reconciliation
+选择对应充值订单|Select the Related Top-up Order
+请核实充值人和订单。金额或时间接近不代表转账属于该账号。|Verify the payer and order. Similar amounts or times do not establish ownership.
+按完整订单编号查找|Find by Full Order ID
+输入充值订单编号|Enter a top-up order ID
+恢复候选列表|Restore Candidates
+入账金额不得超过实际到账金额，也不得超过所选订单本金。|Credit cannot exceed the amount received or the selected order principal.
+我已核实交易归属，确认向所选订单账号入账。|I have verified the transfer belongs to this order and confirm crediting its account.
+确认补单|Confirm Credit
+确认记录|Confirm Resolution
+未匹配订单|No Order Match
+金额不匹配|Amount Mismatch
+超出付款窗口|Outside Payment Window
+订单已入账|Order Already Credited
+实际到账|Amount Received
+已确认到账|Confirmed on Chain
+到账时间|Received on
+关联账号|Related Account
+关联充值订单|Related Top-up Order
+可核对候选订单|Eligible Order Candidates
+匹配订单补单|Match and Credit
+仅记录核对结果|Record Resolution Only
+暂无可入账的候选订单。可使用完整订单编号查找。|No eligible candidates. Search using a full order ID.
+已补单|Manually Credited
+已记录核对结果|Resolution Recorded
+未增加余额|No Balance Change
+处理人|Resolved By
+入账账号|Credited Account
+查看链上交易|View on Explorer
+复制哈希|Copy Hash
+交易哈希已复制。|Transaction hash copied.
+请输入有效的交易哈希或前缀。|Enter a valid transaction hash or prefix.
+监控异常|Monitoring Error
+已扫描区块|Last Scanned Block
+没有符合此交易哈希的待核对转账。|No unresolved transfers match this hash.
+没有符合此交易哈希的已处理记录。|No resolved records match this hash.
+暂无已处理记录|No resolved records yet
+最高可入账|Maximum Credit
+我确认只记录处理结果，不增加余额，并将此款项从待处理列表移除。|I confirm this only records a resolution, does not credit a balance, and removes the transfer from the pending list.
+账号不可用|Account Unavailable
+充值本金|Top-up Principal
+订单创建时间|Order Created
+订单有效期至|Order Expires
+到账是否在有效期内|Received Within Payment Window
+是|Yes
+否|No
+充值订单编号|Top-up Order ID
+此订单不可补单。|This order is not eligible for reconciliation.
+暂无可用订单，请核对完整订单编号。|No eligible orders. Check the full order ID.
+请输入完整的充值订单编号。|Enter the complete top-up order ID.
+此转账已不在待核对列表中，请关闭并刷新。|This transfer is no longer awaiting review. Close the dialog and refresh.
+补单成功，余额及充值订单已更新。|Credit completed. The balance and top-up order have been updated.
+处理结果已记录，但列表刷新失败。请点击刷新核对，不要重复提交。|Resolution recorded, but the list failed to refresh. Refresh to verify; do not submit again.
+核对已确认但尚未入账的转账，关联充值订单并记录处理结果。|Review confirmed but uncredited transfers, match top-up orders, and record resolutions.
+交易所提币：请确保扣除手续费后的实际到账金额等于订单应付金额。|Exchange withdrawals: ensure the amount received after fees equals the exact amount due.
 暂无余额明细|No balance activity yet
 暂无充值记录|No top-ups yet
 暂无待核对转账|No transfers to review

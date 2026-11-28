@@ -29,6 +29,7 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
     credited_hash TEXT, credited_index INTEGER, credited_principal INTEGER, UNIQUE(user_id, request_id), UNIQUE(network, recipient, units));
     CREATE INDEX IF NOT EXISTS deposit_by_user ON deposit_orders(user_id,created_ms);
     CREATE INDEX IF NOT EXISTS deposit_network_watch ON deposit_orders(network,start_block);
+    CREATE INDEX IF NOT EXISTS deposit_open_orders ON deposit_orders(network,recipient,created_ms) WHERE credited_hash IS NULL;
     CREATE TABLE IF NOT EXISTS deposit_request_aliases (user_id TEXT NOT NULL, request_id TEXT NOT NULL,
       order_id TEXT NOT NULL, PRIMARY KEY(user_id,request_id));
     CREATE TABLE IF NOT EXISTS deposit_cursors (network TEXT PRIMARY KEY, height INTEGER NOT NULL);
@@ -371,7 +372,11 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
     interval = null;
     return running;
   }
-  function reviews(includeResolved = false) {
+  function reviewRows(filter, txHash) {
+    const raw = String(txHash ?? '').trim().toLowerCase();
+    if (raw && !/^(?:0x)?[0-9a-f]{1,64}$/.test(raw))
+      throw failure(400, '请输入有效的交易哈希或哈希前缀。');
+    const prefix = raw ? '0x' + raw.replace(/^0x/, '') : '';
     return db
       .prepare(
         `SELECT e.network,e.tx_hash txHash,e.log_index logIndex,e.order_id orderId,o.user_id userId,
@@ -380,11 +385,53 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
       r.user_id creditedUserId,r.principal creditedPrincipal,r.resolved_ms resolvedMs
       FROM deposit_events e LEFT JOIN deposit_orders o ON o.id=e.order_id
       LEFT JOIN deposit_resolutions r ON r.network=e.network AND r.tx_hash=e.tx_hash AND r.log_index=e.log_index
-      WHERE e.disposition!='credited' AND (? OR r.action IS NULL)
-      ORDER BY e.block_time DESC,e.log_index DESC LIMIT 200`
+      WHERE e.disposition!='credited'
+        AND (?=0 OR (?=1 AND r.action IS NULL) OR (?=2 AND r.action IS NOT NULL))
+        AND (?='' OR e.tx_hash LIKE ?)
+      ORDER BY CASE WHEN ?=2 THEN r.resolved_ms ELSE e.block_time*1000 END DESC,e.log_index DESC LIMIT 200`
       )
-      .all(includeResolved ? 1 : 0)
+      .all(filter, filter, filter, prefix, prefix + '%', filter)
       .map(({ units, ...row }) => ({ ...row, paidAmount: amountText(units, row.network) }));
+  }
+  function reviews(includeResolved = false, txHash = '') {
+    return reviewRows(includeResolved ? 0 : 1, txHash);
+  }
+  function history(txHash = '') {
+    return reviewRows(2, txHash);
+  }
+  // Suggest possible orders for an already finalized transfer. These are advisory only;
+  // the operator must choose and verify the account/order. Never link by proximity.
+  function candidates(review, orderId = '') {
+    const event = db.prepare('SELECT * FROM deposit_events WHERE network=? AND tx_hash=? AND log_index=?')
+      .get(review.network, review.txHash, review.logIndex);
+    if (!event || event.disposition === 'credited' ||
+      db.prepare('SELECT 1 FROM deposit_resolutions WHERE network=? AND tx_hash=? AND log_index=?')
+        .get(event.network,event.tx_hash,event.log_index)) return [];
+    const cutoff = (event.block_time + 1) * 1000 - 1;
+    const preexisting = event.order_id ?? null;
+    const availableMinor = BigInt(event.units) / (chainScale(event.network) / 100n);
+    const rows = db.prepare(`SELECT o.id,o.user_id,o.principal,o.units,o.created_ms,o.expires_ms,s.tx_hash pending_hash,
+        EXISTS (SELECT 1 FROM deposit_events e WHERE e.order_id=o.id AND e.disposition!='credited') in_review
+        FROM deposit_orders o LEFT JOIN deposit_seen s ON s.order_id=o.id
+        WHERE o.network=? AND o.recipient=? AND o.credited_hash IS NULL
+        AND o.start_block<=? AND o.created_ms<=? AND (? IS NULL OR o.id=?) AND (?='' OR o.id=?)
+        ORDER BY CASE WHEN o.expires_ms>=? THEN 0 ELSE 1 END,
+          ABS(CAST(o.units AS REAL)-CAST(? AS REAL)),o.created_ms DESC,o.id
+        LIMIT 30`).all(event.network,event.address,event.block_number,cutoff,preexisting,preexisting,orderId,orderId,
+          event.block_time*1000,event.units);
+    return rows.map(row => {
+      const status = row.pending_hash ? 'confirming' : row.in_review ? 'review' : row.expires_ms <= now() ? 'expired' : 'pending';
+      const principal = BigInt(principalMinor(row.principal));
+      const suggested = availableMinor < principal ? availableMinor : principal;
+      return {
+        id:row.id,userId:row.user_id,amount:row.principal,
+        expectedAmount:amountText(row.units,event.network,2),
+        createdAt:stamp(row.created_ms),expiresAt:stamp(row.expires_ms),status,
+        recommendedCredit:Number(suggested)/100,
+        withinWindow:event.block_time*1000<=row.expires_ms,
+        canCredit:suggested>0n && (!row.pending_hash||row.pending_hash===event.tx_hash),
+      };
+    });
   }
   function resolve({ network, txHash, logIndex, action, userId, principal, orderId, actor, note }) {
     if (
@@ -441,6 +488,10 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
           if (!order || order.user_id !== userId || order.network !== network || order.recipient !== event.address)
             throw failure(409, '所选订单的账号、链或收款地址不符。');
           if (order.credited_hash) throw failure(409, '该订单已经入账。');
+          if (event.block_number < order.start_block || event.block_time < Math.floor(order.created_ms / 1000))
+            throw failure(409, '转账时间早于所选充值订单。');
+          const pending = db.prepare('SELECT tx_hash FROM deposit_seen WHERE order_id=?').get(linkedId);
+          if (pending && pending.tx_hash !== txHash) throw failure(409, '该订单已有待确认的链上转账，请等待确认。');
           if (minor > principalMinor(order.principal)) throw failure(409, '入账金额超过所选订单本金。');
           db.prepare(
             'UPDATE deposit_orders SET credited_hash=?, credited_index=?, credited_principal=? WHERE id=?'
@@ -457,6 +508,7 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
           note: '管理员核对 ' + network + ' ' + txHash,
         });
         if (result && typeof result.then === 'function') throw new Error('充值入账必须同步完成');
+        if (result === false) throw failure(409, '此入账编号已有账务记录，请核对充值订单。');
         db.prepare('UPDATE deposit_events SET order_id=? WHERE network=? AND tx_hash=? AND log_index=?').run(
           linkedId,
           network,
@@ -479,5 +531,5 @@ export function createDeposits({ db, config = {}, credit, fetchImpl = fetch, now
       return { action, orderId: linkedId, userId, principal, alreadyResolved: false };
     });
   }
-  return { networks, health, create, get, list, reviews, resolve, start, stop, poll };
+  return { networks, health, create, get, list, reviews, history, candidates, resolve, start, stop, poll };
 }
